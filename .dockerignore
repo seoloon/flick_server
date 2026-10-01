@@ -1,0 +1,8 @@
+target/
+.git/
+.env
+*.md
+!README.md
+docs/
+tests/
+examples/

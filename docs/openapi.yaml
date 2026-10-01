@@ -1,0 +1,198 @@
+openapi: 3.0.3
+info:
+  title: FlickSync HTTP API
+  version: 0.1.0
+  description: |
+    REST surface of FlickSync. Playback, presence and chat are carried by the WebSocket
+    protocol described in `protocol.md` (the upgrade endpoint is listed below for completeness).
+    All room endpoints require `Authorization: Bearer <token>` (a JWT issued by the Flick Server).
+servers:
+  - url: http://localhost:8787
+tags:
+  - name: ops
+  - name: rooms
+paths:
+  /health:
+    get:
+      tags: [ops]
+      summary: Liveness
+      responses:
+        "200":
+          description: Process is up
+          content:
+            application/json:
+              schema: { type: object, properties: { status: { type: string, example: ok }, version: { type: string } } }
+  /ready:
+    get:
+      tags: [ops]
+      summary: Readiness (accepting work and able to verify tokens)
+      responses:
+        "200": { description: Ready }
+        "503": { description: Shutting down or no signing keys configured }
+  /metrics:
+    get:
+      tags: [ops]
+      summary: Prometheus metrics (404 unless FLICKSYNC_METRICS_ENABLED=true)
+      security: [{ metricsToken: [] }, {}]
+      responses:
+        "200": { description: Prometheus text format, content: { text/plain: { schema: { type: string } } } }
+        "401": { description: Metrics token required or wrong }
+        "404": { description: Metrics disabled }
+  /api/v1/rooms:
+    post:
+      tags: [rooms]
+      summary: Create a room (the caller becomes the host)
+      description: Requires the `rooms:create` permission. Rate limited per user.
+      security: [{ bearer: [] }]
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                control_mode: { $ref: "#/components/schemas/ControlMode" }
+                chat_enabled: { type: boolean }
+      responses:
+        "201":
+          description: Room created
+          content: { application/json: { schema: { $ref: "#/components/schemas/RoomAccess" } } }
+        "400": { $ref: "#/components/responses/Error" }
+        "401": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
+        "429": { $ref: "#/components/responses/Error" }
+  /api/v1/rooms/{room_id}:
+    parameters: [{ $ref: "#/components/parameters/RoomId" }]
+    get:
+      tags: [rooms]
+      summary: Room state (members only)
+      security: [{ bearer: [] }]
+      responses:
+        "200":
+          description: Current room state
+          content: { application/json: { schema: { $ref: "#/components/schemas/RoomView" } } }
+        "401": { $ref: "#/components/responses/Error" }
+        "403": { description: Not a member, content: { application/json: { schema: { $ref: "#/components/schemas/ErrorBody" } } } }
+        "404": { $ref: "#/components/responses/Error" }
+  /api/v1/rooms/{room_id}/join:
+    parameters: [{ $ref: "#/components/parameters/RoomId" }]
+    post:
+      tags: [rooms]
+      summary: Reserve a seat in a room
+      description: Requires `rooms:join`. Open the WebSocket afterwards (within FLICKSYNC_CONNECT_GRACE).
+      security: [{ bearer: [] }]
+      responses:
+        "200":
+          description: Joined (idempotent)
+          content: { application/json: { schema: { $ref: "#/components/schemas/RoomAccess" } } }
+        "401": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+        "409": { description: Room full, content: { application/json: { schema: { $ref: "#/components/schemas/ErrorBody" } } } }
+        "410": { $ref: "#/components/responses/Error" }
+  /api/v1/rooms/{room_id}/leave:
+    parameters: [{ $ref: "#/components/parameters/RoomId" }]
+    post:
+      tags: [rooms]
+      summary: Leave a room permanently
+      security: [{ bearer: [] }]
+      responses:
+        "204": { description: Left }
+        "401": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+  /api/v1/rooms/{room_id}/ws:
+    parameters: [{ $ref: "#/components/parameters/RoomId" }]
+    get:
+      tags: [rooms]
+      summary: WebSocket upgrade (see protocol.md)
+      description: |
+        Authenticate with `Authorization: Bearer <token>` or `?access_token=<token>`.
+        A browser `Origin` header must be listed in FLICKSYNC_CORS_ORIGINS.
+        Joins the room implicitly when the user is not yet a member.
+      security: [{ bearer: [] }]
+      parameters:
+        - { name: access_token, in: query, required: false, schema: { type: string }, description: Fallback for clients that cannot set headers }
+      responses:
+        "101": { description: Switching protocols }
+        "401": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+        "409": { $ref: "#/components/responses/Error" }
+        "410": { $ref: "#/components/responses/Error" }
+        "503": { $ref: "#/components/responses/Error" }
+components:
+  securitySchemes:
+    bearer: { type: http, scheme: bearer, bearerFormat: JWT }
+    metricsToken: { type: http, scheme: bearer }
+  parameters:
+    RoomId:
+      name: room_id
+      in: path
+      required: true
+      description: 12-character room id or its hyphenated share code (case-insensitive)
+      schema: { type: string, example: MR82A9Z8VBJQ }
+  responses:
+    Error:
+      description: Error
+      content: { application/json: { schema: { $ref: "#/components/schemas/ErrorBody" } } }
+  schemas:
+    ErrorBody:
+      type: object
+      properties:
+        error:
+          type: object
+          properties:
+            code: { type: string, example: ROOM_NOT_FOUND }
+            message: { type: string }
+    ControlMode: { type: string, enum: [everyone, host_only] }
+    RoomAccess:
+      type: object
+      properties:
+        room_id: { type: string }
+        share_code: { type: string, example: MR82-A9Z8-VBJQ }
+        participant_id: { type: string }
+        host_id: { type: string }
+        ws_path: { type: string, example: /api/v1/rooms/MR82A9Z8VBJQ/ws }
+        room: { $ref: "#/components/schemas/RoomView" }
+    PlaybackSnapshot:
+      type: object
+      properties:
+        state: { type: string, enum: [playing, paused] }
+        position: { type: number, description: Seconds at server_time }
+        rate: { type: number }
+        server_time: { type: integer, format: int64, description: Server wall clock, ms since epoch }
+        sequence: { type: integer, format: int64 }
+    MediaRef:
+      type: object
+      required: [provider, server_id, media_id, media_type]
+      properties:
+        provider: { type: string, enum: [jellyfin, plex] }
+        server_id: { type: string, pattern: '^[A-Za-z0-9._:-]{1,128}$' }
+        media_id: { type: string, pattern: '^[A-Za-z0-9._:-]{1,128}$' }
+        media_type: { type: string, enum: [movie, episode] }
+        season_id: { type: string }
+        episode_id: { type: string }
+        title: { type: string }
+        duration_secs: { type: number }
+    Participant:
+      type: object
+      properties:
+        participant_id: { type: string }
+        display_name: { type: string }
+        presence: { type: string, enum: [connected, reconnecting, disconnected] }
+        is_host: { type: boolean }
+        joined_at: { type: integer, format: int64 }
+    RoomView:
+      type: object
+      properties:
+        room_id: { type: string }
+        state: { type: string, enum: [waiting, media_selected, playing, paused, empty, closed] }
+        host_id: { type: string }
+        control_mode: { $ref: "#/components/schemas/ControlMode" }
+        chat_enabled: { type: boolean }
+        max_participants: { type: integer }
+        participants: { type: array, items: { $ref: "#/components/schemas/Participant" } }
+        media: { nullable: true, allOf: [{ $ref: "#/components/schemas/MediaRef" }] }
+        playback: { $ref: "#/components/schemas/PlaybackSnapshot" }
+        created_at: { type: integer, format: int64 }

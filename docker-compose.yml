@@ -1,0 +1,20 @@
+# Minimal deployment: one container, everything in memory, no database, no Redis.
+#
+#   cp .env.example .env     # set FLICKSYNC_AUTH_KEYS at least
+#   docker compose up -d --build
+services:
+  flicksync:
+    build: .
+    image: flicksync:latest
+    restart: unless-stopped
+    env_file:
+      - .env
+    ports:
+      - "${FLICKSYNC_PORT:-8787}:${FLICKSYNC_PORT:-8787}"
+    # Hardening (the service needs no filesystem writes and no privileges).
+    read_only: true
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
+    # Allow sockets to drain on SIGTERM (FLICKSYNC_SHUTDOWN_GRACE defaults to 10s).
+    stop_grace_period: 15s
