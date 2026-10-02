@@ -1,0 +1,215 @@
+{
+  "name": "Flick",
+  "version": 1,
+  "meta": {
+    "source": "github",
+    "repo": "seoloon/flick_desktop",
+    "ref": "master@382c72e",
+    "package": "ui",
+    "paths": {
+      "tokens": ["ui/src/index.css", "ui/src/lib/motion.ts", "ui/src/lib/profiles.ts"],
+      "fonts": ["@fontsource-variable/inter/opsz.css (npm, the package ui/package.json depends on)"],
+      "assets": ["app/icons/basic/flick-mark.svg", "app/icons/basic/flick-wordmark.svg", "app/icons/basic/flick-wordmark-flat.svg", "app/icons/basic/flick-icon.svg", "docs/assets/flick-wordmark-light.svg", "lucide-react icons imported under ui/src"],
+      "docs": ["docs/DESIGN_SYSTEM.md", "README.md"]
+    },
+    "components": {
+      "Button": "ui/src/components/tv/Button.tsx",
+      "MediaCard": "ui/src/components/tv/Card.tsx",
+      "Shelf": "ui/src/components/tv/Shelf.tsx",
+      "Segmented": "ui/src/components/tv/Segmented.tsx",
+      "Switch": "ui/src/components/tv/Switch.tsx",
+      "TextField": "ui/src/components/tv/TextField.tsx",
+      "SettingsGroup": "ui/src/components/tv/SettingsList.tsx",
+      "Pill": "ui/src/components/tv/Page.tsx",
+      "Panel": "ui/src/components/tv/Page.tsx",
+      "PageHeader": "ui/src/components/tv/Page.tsx",
+      "Notice": "ui/src/components/tv/Feedback.tsx",
+      "EmptyState": "ui/src/components/tv/Feedback.tsx",
+      "Dialog": "ui/src/components/tv/TvDialog.tsx",
+      "TabBar": "ui/src/shell/TabBar.tsx",
+      "Sidebar": "ui/src/shell/Sidebar.tsx",
+      "ProfileAvatar": "ui/src/components/tv/ProfileAvatar.tsx",
+      "PinPad": "ui/src/components/tv/PinPad.tsx",
+      "ItemMenu": "ui/src/components/tv/ItemMenu.tsx",
+      "Hero": "ui/src/components/tv/Hero.tsx + ui/src/features/home/Home.tsx",
+      "Logo": "ui/src/components/tv/FlickMark.tsx + FlickWordmark.tsx"
+    },
+    "synced": "2026-10-02"
+  },
+  "color": {
+    "note": "Dark only: Flick is a living-room screen. The chrome is monochrome (black, white, translucent white); colour only ever comes from the artwork, through the ambient backdrop.",
+    "themes": [{ "id": "dark", "name": "Dark" }],
+    "tokens": [
+      { "name": "background", "value": "oklch(0.11 0 0)", "usage": "The neutral black under everything: the ambient backdrop's base and the window ground when no artwork is selected." },
+      { "name": "foreground", "value": "oklch(0.985 0 0)", "usage": "All primary text and icons. 16:1 or better on background, card, glass and glass-strong." },
+      { "name": "card", "value": "oklch(0.18 0 0)", "usage": "Opaque raised surface (shadcn card). Most surfaces are glass instead." },
+      { "name": "card-foreground", "value": "oklch(0.985 0 0)", "usage": "Text on card." },
+      { "name": "popover", "value": "oklch(0.2 0 0 / 0.92)", "usage": "Opaque-ish menus from shadcn primitives; Flick's own menus use glass-strong." },
+      { "name": "popover-foreground", "value": "oklch(0.985 0 0)", "usage": "Text on popover." },
+      { "name": "primary", "value": "oklch(0.985 0 0)", "usage": "The primary action fill (Play, Resume, Save) and every focused control: white." },
+      { "name": "primary-foreground", "value": "oklch(0.145 0 0)", "usage": "Text and icons on primary or on any focused (white) control." },
+      { "name": "secondary", "value": "oklch(1 0 0 / 0.1)", "usage": "Translucent secondary fill." },
+      { "name": "secondary-foreground", "value": "oklch(0.985 0 0)", "usage": "Text on secondary." },
+      { "name": "muted", "value": "oklch(1 0 0 / 0.08)", "usage": "Quiet fills: PIN keys, skeletons." },
+      { "name": "muted-foreground", "value": "oklch(1 0 0 / 0.58)", "usage": "Secondary text: subtitles under card titles, hints, leads, section labels. 6.4:1 on glass, 6.9:1 on background." },
+      { "name": "subtle", "value": "oklch(1 0 0 / 0.38)", "usage": "Decorative only: separators in the meta line, placeholders. 3.4:1 on background, fails 4.5:1, so never for body text." },
+      { "name": "accent", "value": "oklch(1 0 0 / 0.12)", "usage": "Hover and highlight fill in shadcn primitives." },
+      { "name": "accent-foreground", "value": "oklch(0.985 0 0)", "usage": "Text on accent." },
+      { "name": "destructive", "value": "oklch(0.7 0.17 25)", "usage": "Danger button text and destructive actions. 5.8:1 on glass." },
+      { "name": "border", "value": "oklch(1 0 0 / 0.1)", "usage": "Default border colour; rings around plain pills." },
+      { "name": "hairline", "value": "oklch(1 0 0 / 0.08)", "usage": "Separators inside menus and lists." },
+      { "name": "input", "value": "oklch(1 0 0 / 0.14)", "usage": "Input borders in shadcn primitives." },
+      { "name": "ring", "value": "oklch(1 0 0 / 0.6)", "usage": "Fallback 2px focus outline for plain elements (offset 2px). Flick components draw focus themselves: white fill + lift." },
+      { "name": "glass", "value": "oklch(1 0 0 / 0.07)", "usage": "Frosted surface fill over the blurred artwork: sidebar, tab bar, panels, settings groups, glass buttons, fields. Always with glass-blur and shadow-glass." },
+      { "name": "glass-strong", "value": "oklch(0.22 0 0 / 0.72)", "usage": "Denser frosted surface for overlays: dialogs, context menus, the profile popover. With glass-strong-blur and shadow-glass-strong." },
+      { "name": "glass-opaque", "value": "oklch(0.2 0 0 / 0.88)", "usage": "glass when Frosted panels is off (data-blur=false): no backdrop-filter, more opaque." },
+      { "name": "glass-strong-opaque", "value": "oklch(0.18 0 0 / 0.97)", "usage": "glass-strong when Frosted panels is off." },
+      { "name": "hover", "value": "oklch(1 0 0 / 0.07)", "usage": "Pointer hover on rows and sidebar items (bg-white/[0.07])." },
+      { "name": "selected", "value": "oklch(1 0 0 / 0.16)", "usage": "The resting pill under the active tab bar item (white/16). Segments use white/18, sidebar items white/14." },
+      { "name": "artwork-placeholder", "value": "oklch(1 0 0 / 0.06)", "usage": "Behind artwork while it loads, card skeletons, missing posters (title set in white/55 on it)." },
+      { "name": "progress-track", "value": "oklch(1 0 0 / 0.25)", "usage": "Track of the resume bar on cards; the fill is foreground." },
+      { "name": "overlay", "value": "rgba(0, 0, 0, 0.5)", "usage": "Scrim behind dialogs, with a small backdrop blur." },
+      { "name": "ambient-base", "value": "oklch(0.16 0 0)", "usage": "Runtime: the artwork's base colour, luminance-clamped in Rust to 7.5 %. This is its neutral default." },
+      { "name": "ambient-accent", "value": "oklch(0.5 0 0)", "usage": "Runtime: the artwork's accent light. Neutral default shown." },
+      { "name": "warn", "value": "oklch(0.924 0.12 95.746)", "usage": "Warning text and icon (Tailwind amber-200): Notice warn, Pill warn. 13:1 on glass." },
+      { "name": "warn-surface", "value": "oklch(0.879 0.169 91.605 / 0.15)", "usage": "Warning pill fill (amber-300 at 15 %)." },
+      { "name": "error", "value": "oklch(0.808 0.114 19.571)", "usage": "Error notice icon (Tailwind red-300). Always paired with the alert icon and words, never colour alone." },
+      { "name": "profile-blue", "value": "#5e8bff", "usage": "Profile colour 1. Tints only that profile's avatar gradient and the picker's ambient light; never chrome." },
+      { "name": "profile-red", "value": "#ff6b6b", "usage": "Profile colour 2 (avatar only)." },
+      { "name": "profile-green", "value": "#3ecf8e", "usage": "Profile colour 3 (avatar only)." },
+      { "name": "profile-amber", "value": "#ffb547", "usage": "Profile colour 4 (avatar only)." },
+      { "name": "profile-violet", "value": "#b07cff", "usage": "Profile colour 5 (avatar only)." },
+      { "name": "profile-pink", "value": "#ff7ac6", "usage": "Profile colour 6 (avatar only)." },
+      { "name": "profile-cyan", "value": "#35c6d6", "usage": "Profile colour 7 (avatar only)." },
+      { "name": "profile-grey", "value": "#a3a3a3", "usage": "Profile colour 8 (avatar only)." }
+    ]
+  },
+  "type": {
+    "fonts": [
+      { "family": "Inter Variable", "file": "fonts/inter-latin-opsz-normal.woff2", "weight": "100 900", "style": "normal" },
+      { "family": "Inter Variable", "file": "fonts/inter-latin-opsz-italic.woff2", "weight": "100 900", "style": "italic" }
+    ],
+    "families": {
+      "sans": "-apple-system, BlinkMacSystemFont, \"SF Pro Text\", \"Inter Variable\", system-ui, sans-serif",
+      "heading": "-apple-system, BlinkMacSystemFont, \"SF Pro Display\", \"Inter Variable\", system-ui, sans-serif",
+      "mono": "ui-monospace, \"SF Mono\", \"Cascadia Mono\", Consolas, monospace"
+    },
+    "groups": [
+      {
+        "name": "Display",
+        "family": "heading",
+        "styles": [
+          { "name": "hero-title", "fontSize": "3.5rem", "lineHeight": 0.95, "fontWeight": 700, "letterSpacing": "-0.025em", "sample": "The Long Night", "usage": "Hero title when the artwork has no logo (Home carousel, detail page). Drop shadow 0 4px 24px black/45." },
+          { "name": "page-title", "fontSize": "2.75rem", "lineHeight": 1, "fontWeight": 700, "letterSpacing": "-0.025em", "sample": "Libraries", "usage": "Top of every non-media screen (PageHeader)." },
+          { "name": "empty-title", "fontSize": "2.25rem", "lineHeight": "2.5rem", "fontWeight": 700, "letterSpacing": "-0.025em", "sample": "Nothing here yet", "usage": "EmptyState heading." },
+          { "name": "dialog-title", "fontSize": "1.5rem", "lineHeight": "2rem", "fontWeight": 700, "letterSpacing": "-0.025em", "sample": "Add a server", "usage": "Dialog and PIN pad titles." },
+          { "name": "shelf-title", "fontSize": "1.3125rem", "lineHeight": 1.5, "fontWeight": 600, "letterSpacing": "-0.025em", "sample": "Continue Watching", "usage": "Shelf (row) headings on Home and detail pages." },
+          { "name": "panel-title", "fontSize": "1.125rem", "lineHeight": "1.75rem", "fontWeight": 600, "letterSpacing": "-0.022em", "sample": "Playback", "usage": "Panel headings; profile names under avatars." }
+        ]
+      },
+      {
+        "name": "Text",
+        "family": "sans",
+        "styles": [
+          { "name": "lead", "fontSize": "1.0625rem", "lineHeight": 1.625, "fontWeight": 400, "letterSpacing": "-0.011em", "sample": "Every server in one library.", "usage": "Page leads and hero overviews (overview in white/80, max 3 lines)." },
+          { "name": "tab", "fontSize": "1rem", "lineHeight": 1.5, "fontWeight": 600, "letterSpacing": "-0.011em", "sample": "Home", "usage": "Flick Frame tab bar items; lg buttons." },
+          { "name": "body", "fontSize": "0.9375rem", "lineHeight": 1.5, "fontWeight": 400, "letterSpacing": "-0.011em", "sample": "Direct Play first.", "usage": "Default text size across the chrome (15px)." },
+          { "name": "body-medium", "fontSize": "0.9375rem", "lineHeight": 1.5, "fontWeight": 500, "letterSpacing": "-0.011em", "sample": "Audio passthrough", "usage": "Settings row labels, sidebar items, menu items, meta line." },
+          { "name": "label", "fontSize": "0.9375rem", "lineHeight": 1.25, "fontWeight": 600, "letterSpacing": "-0.011em", "sample": "Details", "usage": "md button labels and card titles (leading-tight, truncated)." },
+          { "name": "small", "fontSize": "0.875rem", "lineHeight": 1.625, "fontWeight": 400, "letterSpacing": "-0.011em", "sample": "Server unreachable. Retrying.", "usage": "Notices, facts, md segments (600)." },
+          { "name": "caption", "fontSize": "0.8125rem", "lineHeight": 1.25, "fontWeight": 400, "letterSpacing": "-0.011em", "sample": "S2 · E4 · The Bridge", "usage": "Card subtitles, row hints, field labels (500), sm buttons (600). In muted-foreground." },
+          { "name": "section-label", "fontSize": "0.8125rem", "lineHeight": 1.25, "fontWeight": 600, "letterSpacing": "0.025em", "sample": "PLAYBACK", "usage": "Settings group titles: uppercase, in muted-foreground." },
+          { "name": "pill", "fontSize": "0.75rem", "lineHeight": 1, "fontWeight": 600, "letterSpacing": "0.025em", "sample": "4K HDR", "usage": "Pill badges (rating, quality, HDR)." },
+          { "name": "micro", "fontSize": "0.6875rem", "lineHeight": 1.25, "fontWeight": 500, "letterSpacing": "-0.011em", "sample": "Living room", "usage": "Server badge on a focused card; compact row hints." }
+        ]
+      },
+      {
+        "name": "Mono",
+        "family": "mono",
+        "styles": [
+          { "name": "facts-mono", "fontSize": "0.75rem", "lineHeight": 1.5, "fontWeight": 400, "sample": "HEVC Main10 · 3840×2160", "usage": "Technical facts (playback info, debug)." }
+        ]
+      }
+    ]
+  },
+  "spacing": {
+    "note": "Everything is in rem, so Flick Frame scales the whole UI by changing the root font size: 16px on the desktop, clamp(15.3px, 1.0625vw, 34px) in Frame. The -frame and -compact tokens are the overrides under html.frame and [data-density=compact].",
+    "tokens": [
+      { "name": "gutter", "value": "3.5rem", "usage": "Left and right page padding; shelves scroll edge to edge inside it." },
+      { "name": "gutter-frame", "value": "4.5rem", "usage": "gutter in Flick Frame." },
+      { "name": "page-top", "value": "4rem", "usage": "Top padding of non-hero pages." },
+      { "name": "page-top-frame", "value": "7rem", "usage": "page-top in Flick Frame (clears the floating tab bar)." },
+      { "name": "card-gap", "value": "1.5rem", "usage": "Gap between cards in a shelf or grid." },
+      { "name": "card-gap-frame", "value": "2rem", "usage": "card-gap in Flick Frame." },
+      { "name": "card-gap-compact", "value": "1.125rem", "usage": "card-gap at compact density." },
+      { "name": "poster-w", "value": "10.5rem", "usage": "Width of a 2:3 poster card." },
+      { "name": "poster-w-frame", "value": "11.5rem", "usage": "Poster width in Flick Frame." },
+      { "name": "poster-w-compact", "value": "9rem", "usage": "Poster width at compact density." },
+      { "name": "thumb-w", "value": "20rem", "usage": "Width of a 16:9 thumb card (episodes, Continue Watching)." },
+      { "name": "thumb-w-frame", "value": "21rem", "usage": "Thumb width in Flick Frame." },
+      { "name": "thumb-w-compact", "value": "17rem", "usage": "Thumb width at compact density." },
+      { "name": "sidebar-w", "value": "15.5rem", "usage": "Desktop sidebar width, and the content's left offset (heroes bleed under it)." },
+      { "name": "sidebar-w-collapsed", "value": "5.65rem", "usage": "Collapsed sidebar: exactly wide enough to centre the icons, which never move." },
+      { "name": "space-1", "value": "0.25rem", "usage": "Glass control inner padding (segmented, tab bar track: 0.375rem)." },
+      { "name": "space-1-5", "value": "0.375rem", "usage": "Settings group and menu inner padding: rows sit concentric inside." },
+      { "name": "space-3", "value": "0.75rem", "usage": "Button groups, sidebar padding, icon-to-label gap." },
+      { "name": "space-4", "value": "1rem", "usage": "Row horizontal padding; panel stacks." },
+      { "name": "space-5", "value": "1.25rem", "usage": "Dialog stack gap; hero stack gap." },
+      { "name": "space-6", "value": "1.5rem", "usage": "Panel padding; row label-to-value gap." },
+      { "name": "space-8", "value": "2rem", "usage": "Dialog padding; page section gap." }
+    ]
+  },
+  "radius": {
+    "note": "Radius follows content, and nested shapes are concentric: inner radius = outer radius minus the padding between them.",
+    "tokens": [
+      { "name": "radius", "value": "0.875rem", "usage": "Base radius (14px); the scale below multiplies it." },
+      { "name": "radius-sm", "value": "0.525rem", "usage": "radius x 0.6." },
+      { "name": "radius-md", "value": "0.7rem", "usage": "Pill badges (radius x 0.8)." },
+      { "name": "radius-lg", "value": "0.875rem", "usage": "Poster cards (2:3)." },
+      { "name": "radius-xl", "value": "1.225rem", "usage": "Thumb cards (16:9); rows inside a 2xl group or menu (25.2 - 6 = 19.6px)." },
+      { "name": "radius-2xl", "value": "1.575rem", "usage": "Settings groups, context menus, text fields, notices." },
+      { "name": "radius-3xl", "value": "1.925rem", "usage": "Panels." },
+      { "name": "radius-4xl", "value": "2.275rem", "usage": "radius x 2.6; largest step." },
+      { "name": "radius-sidebar", "value": "1.75rem", "usage": "Sidebar panel and profile popover (28px)." },
+      { "name": "radius-sidebar-item", "value": "1rem", "usage": "Sidebar items: 28px panel - 12px padding." },
+      { "name": "radius-dialog", "value": "2rem", "usage": "Dialogs; the close button sits centred on the corner's arc." },
+      { "name": "radius-full", "value": "9999px", "usage": "Buttons, tabs, segments, switches, avatars, PIN keys: every control is a pill or a disc." }
+    ]
+  },
+  "shadow": {
+    "note": "Depth comes from focus (lift + deep shadow) and glass rims, not from routine grey shadows.",
+    "tokens": [
+      { "name": "shadow-glass", "value": "inset 0 1px 0 0 oklch(1 0 0 / 0.1), inset 0 0 0 1px oklch(1 0 0 / 0.06)", "usage": "The rim of every glass surface: a lit top edge and a faint inner line." },
+      { "name": "shadow-glass-strong", "value": "inset 0 1px 0 0 oklch(1 0 0 / 0.12), inset 0 0 0 1px oklch(1 0 0 / 0.08), 0 30px 80px -20px oklch(0 0 0 / 0.6)", "usage": "glass-strong overlays: rim plus a long drop." },
+      { "name": "shadow-card", "value": "0 10px 24px -14px rgb(0 0 0 / 0.6), 0 0 0 1px rgb(255 255 255 / 0.06)", "usage": "Artwork at rest." },
+      { "name": "shadow-card-lifted", "value": "0 32px 56px -18px rgb(0 0 0 / 0.85), 0 0 0 1px rgb(255 255 255 / 0.1)", "usage": "Artwork focused or hovered: the deep lift." },
+      { "name": "shadow-focus", "value": "0 18px 40px -12px rgb(0 0 0 / 0.75)", "usage": "A focused button." },
+      { "name": "shadow-row-focus", "value": "0 16px 36px -14px rgb(0 0 0 / 0.8)", "usage": "A focused settings row." },
+      { "name": "shadow-nav-focus", "value": "0 10px 30px -10px rgb(0 0 0 / 0.7)", "usage": "A focused sidebar item." },
+      { "name": "shadow-menu", "value": "0 28px 60px -16px rgb(0 0 0 / 0.8)", "usage": "Context menu (ItemMenu), on top of glass-strong." },
+      { "name": "shadow-switch-focus", "value": "0 0 0 3px rgb(0 0 0 / 0.5), 0 0 0 5px rgb(255 255 255)", "usage": "A focused standalone switch: dark gap, then a solid white ring." },
+      { "name": "shadow-field-focus", "value": "0 0 0 2px rgb(255 255 255 / 0.85)", "usage": "A focused text field." }
+    ]
+  },
+  "blur": {
+    "note": "backdrop-filter radii. Glass also saturates what is behind it (1.6, strong 1.8).",
+    "tokens": [
+      { "name": "glass-blur", "value": "36px", "usage": "glass surfaces." },
+      { "name": "glass-strong-blur", "value": "48px", "usage": "glass-strong overlays." },
+      { "name": "ambient-blur", "value": "72px", "usage": "The artwork behind the whole screen (with saturate 1.6, brightness 0.62)." },
+      { "name": "overlay-blur", "value": "8px", "usage": "The dialog scrim." }
+    ]
+  },
+  "scale": {
+    "note": "The focus lift, per control. Focus is the one spectacular thing in the UI.",
+    "tokens": [
+      { "name": "lift-card", "value": "1.1", "usage": "A focused media card, profile tile or PIN key." },
+      { "name": "lift-card-hover", "value": "1.04", "usage": "A card under the pointer." },
+      { "name": "lift-button", "value": "1.08", "usage": "A focused button or tab." },
+      { "name": "lift-segment", "value": "1.06", "usage": "A focused segment." },
+      { "name": "lift-nav", "value": "1.04", "usage": "A focused sidebar item." },
+      { "name": "lift-row", "value": "1.025", "usage": "A focused settings row (1.02 compact)." },
+      { "name": "press", "value": "0.95", "usage": "Buttons while pressed (cards 0.97, PIN keys 0.92)." }
+    ]
+  }
+}

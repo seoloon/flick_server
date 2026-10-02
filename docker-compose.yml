@@ -23,5 +23,26 @@ services:
     # Allow sockets to drain on SIGTERM (FLICKSYNC_SHUTDOWN_GRACE defaults to 10s).
     stop_grace_period: 15s
 
+  # Optional web panel (Next.js). ENABLE_WEB_PANEL=false (the default) makes the container exit
+  # right away and publish nothing; ENABLE_WEB_PANEL=true serves it on PANEL_PORT (default 3000).
+  panel:
+    build: ./panel
+    image: flick-panel:latest
+    restart: on-failure
+    env_file:
+      - .env
+    environment:
+      FLICKSYNC_URL: http://flicksync:8787
+    depends_on:
+      - flicksync
+    ports:
+      - "${PANEL_PORT:-3000}:3000"
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
+
 volumes:
   flicksync-data:

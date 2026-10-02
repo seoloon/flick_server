@@ -36,6 +36,20 @@ curl -s -X POST localhost:8787/api/v1/rooms -H "Authorization: Bearer $TOKEN"
 # then connect a WebSocket client to the returned ws_path with the same Authorization header
 ```
 
+## Web panel
+
+An optional Next.js panel (Flick design system) gives you the invitation link with a copy button and QR code, the
+live rooms with a button to close frozen ones, and sync statistics. Enable it in `.env`:
+
+```
+ENABLE_WEB_PANEL=true
+PANEL_PASSWORD=<10+ characters>
+FLICKSYNC_ADMIN_TOKEN=<16+ characters>
+```
+
+then `docker compose up -d --build` and open `http://localhost:3000`. Details and security model:
+[panel/README.md](panel/README.md); the API behind it: [docs/admin-api.md](docs/admin-api.md).
+
 ## Documentation
 
 | Document | For |
@@ -43,6 +57,7 @@ curl -s -X POST localhost:8787/api/v1/rooms -H "Authorization: Bearer $TOKEN"
 | [docs/protocol.md](docs/protocol.md) | Flick client developers: every message, payload, error and the sync model |
 | [docs/flick-integration.md](docs/flick-integration.md) | What Flick (client + server) must implement; token issuing and key rotation |
 | [docs/deployment.md](docs/deployment.md) | Docker, Dokploy, Coolify, bare metal, Nginx/Traefik/Cloudflare WebSocket setup, operations |
+| [docs/admin-api.md](docs/admin-api.md) | The operator API behind the web panel: rooms, invitation, statistics |
 | [docs/architecture.md](docs/architecture.md) | Design, decisions, risks |
 | [docs/scaling.md](docs/scaling.md) | What multi-instance rooms would require |
 | [docs/openapi.yaml](docs/openapi.yaml) | REST API (OpenAPI 3) |

@@ -31,6 +31,13 @@ reused afterwards. **Keep that directory on a persistent volume** (the compose f
 is generated and the old invitation stops working. The service refuses to start if the file exists but is empty or
 corrupt; it never regenerates a key silently. Set `FLICKSYNC_PUBLIC_URL` so invitations carry your real address.
 
+### Web panel
+
+`ENABLE_WEB_PANEL=true` in `.env`, plus `PANEL_PASSWORD` and `FLICKSYNC_ADMIN_TOKEN`, starts the `panel` service on
+port 3000 (see [../panel/README.md](../panel/README.md)); without it the service exits immediately and nothing is
+published. Put the panel behind your TLS reverse proxy like FlickSync, and forward `X-Forwarded-Proto` and
+`X-Forwarded-For`. Use `docker compose up -d flicksync` to run FlickSync alone and skip building the panel.
+
 ### Invitation and key management
 
 | Need | How |
