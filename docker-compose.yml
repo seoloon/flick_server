@@ -5,7 +5,9 @@
 #   docker compose exec flicksync flicksync invite   # the one-link invitation for Flick
 services:
   flicksync:
-    build: .
+    build:
+      context: .
+      target: flicksync
     image: flicksync:latest
     restart: unless-stopped
     env_file:
@@ -26,7 +28,9 @@ services:
   # Optional web panel (Next.js). ENABLE_WEB_PANEL=false (the default) makes the container exit
   # right away and publish nothing; ENABLE_WEB_PANEL=true serves it on PANEL_PORT (default 3000).
   panel:
-    build: ./panel
+    build:
+      context: .
+      target: panel
     image: flick-panel:latest
     restart: on-failure
     env_file:

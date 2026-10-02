@@ -17,7 +17,8 @@ docker compose exec flicksync flicksync invite   # prints the invitation link fo
 
 The invitation link is also printed in a banner in the startup logs (`docker compose logs flicksync`).
 
-The image is multi-stage (Rust build → `distroless/cc` runtime), runs as a non-root user, has no shell or package
+The repository has a single `Dockerfile` with two targets, `flicksync` (the default) and `panel`; compose builds each
+into its own container. The FlickSync image is multi-stage (Rust build → `distroless/cc` runtime), runs as a non-root user, has no shell or package
 manager, and carries a `HEALTHCHECK` (`flicksync healthcheck`, a built-in probe, since the image has no curl).
 `docker-compose.yml` also runs it read-only with all capabilities dropped. Put a TLS-terminating reverse proxy in
 front (below): Flick clients should use `https://` / `wss://`.
@@ -55,7 +56,7 @@ link from the newest configured key, and `--rotate` is refused (rotate in your o
 
 ## Dokploy / Coolify
 
-1. Create an application from the Git repository using the **Dockerfile** build type (or the Compose file).
+1. Create an application from the Git repository using the **Dockerfile** build type (or the Compose file). The `Dockerfile` has two targets: leave the target empty for FlickSync, or set it to `panel` for a separate panel application.
 2. Set `FLICKSYNC_PUBLIC_URL` (your domain) and mount a persistent volume on `/data` (holds the generated signing key). Read the invitation from the logs or run `flicksync invite` in the container terminal. Alternatively set `FLICKSYNC_AUTH_KEYS` yourself as a *secret* variable.
 3. Container port: `8787` (or your `FLICKSYNC_PORT`). Attach your domain; the platform's Traefik/Caddy handles TLS.
 4. Health check path: `/health` (platforms that use the Docker `HEALTHCHECK` need nothing).
