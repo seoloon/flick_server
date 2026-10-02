@@ -98,6 +98,42 @@ LimitNOFILE=65536
 `systemctl enable --now flicksync`. SIGTERM/SIGINT trigger a graceful shutdown (rooms closed, sockets drained).
 Raise `LimitNOFILE` if you expect thousands of simultaneous connections.
 
+## One domain for several components (Traefik)
+
+FlickSync is not the only component of a Flick Server, so a single domain can serve them side by side, each under its
+own path prefix, without a second subdomain. The panel keeps the root; FlickSync lives under `/sync` and the proxy strips
+the prefix, so FlickSync itself needs no change and no extra hop:
+
+```yaml
+# docker-compose.override.yml (Traefik v3, entrypoint websecure, certresolver le)
+services:
+  flicksync:
+    ports: !reset []        # Traefik reaches it over the Docker network (Compose 2.24+)
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.flicksync.rule=Host(`flick.example.com`) && PathPrefix(`/sync`)
+      - traefik.http.routers.flicksync.entrypoints=websecure
+      - traefik.http.routers.flicksync.tls.certresolver=le
+      - traefik.http.routers.flicksync.priority=100
+      - traefik.http.routers.flicksync.middlewares=flicksync-strip
+      - traefik.http.middlewares.flicksync-strip.stripprefix.prefixes=/sync
+      - traefik.http.services.flicksync.loadbalancer.server.port=8787
+  panel:
+    ports: !reset []
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.panel.rule=Host(`flick.example.com`)
+      - traefik.http.routers.panel.entrypoints=websecure
+      - traefik.http.routers.panel.tls.certresolver=le
+      - traefik.http.services.panel.loadbalancer.server.port=3000
+```
+
+Then set `FLICKSYNC_PUBLIC_URL=https://flick.example.com/sync` so the invitation link carries the prefix
+(`flicksync://flick.example.com/sync/?v=1&tls=1#k=...`). Clients append every API path, `ws_path` included, to that
+base. WebSockets pass through Traefik without extra configuration. The `ports: !reset []` lines unpublish the host ports: only Traefik
+reaches the containers. The compose services must also be on a network Traefik shares (add `networks:` as in your
+Traefik setup).
+
 ## Reverse proxy and WebSockets
 
 The WebSocket endpoint is `GET /api/v1/rooms/{id}/ws` (an HTTP/1.1 `Upgrade`). The proxy must forward the

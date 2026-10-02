@@ -87,6 +87,23 @@ async fn invite_returns_the_link_and_a_qr_and_is_not_cacheable() {
     assert_eq!(parsed.endpoint.authority, "sync.example.com");
     assert_eq!(inv["address"], "https://sync.example.com");
     assert_eq!(inv["address_guessed"], false);
+
+    // A path prefix (reverse proxy) ends up in the link and in the address.
+    let p = TestServer::start(&[
+        ("FLICKSYNC_ADMIN_TOKEN", ADMIN),
+        ("FLICKSYNC_PUBLIC_URL", "https://flick.example.com/sync"),
+    ])
+    .await;
+    let (_, pinv) = p
+        .http(Method::GET, "/admin/v1/invite", Some(ADMIN), None)
+        .await;
+    assert!(
+        pinv["url"]
+            .as_str()
+            .unwrap()
+            .starts_with("flicksync://flick.example.com/sync/?v=1&tls=1#k=")
+    );
+    assert_eq!(pinv["address"], "https://flick.example.com/sync");
     assert_eq!(inv["key_source"], "environment");
     assert!(inv["qr"].as_array().unwrap().len() > 20);
 

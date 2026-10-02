@@ -64,7 +64,35 @@ fn io_err(path: &Path) -> impl FnOnce(std::io::Error) -> InviteError + '_ {
 pub struct Endpoint {
     /// `host` or `host:port` (IPv6 hosts in brackets).
     pub authority: String,
+    /// Path prefix when the service sits behind a reverse proxy under one (`/sync`): empty, or
+    /// `/seg` or `/seg/seg`, never a trailing slash.
+    pub path: String,
     pub tls: bool,
+}
+
+/// Validate and normalise a path prefix: `""`, `"/"` and `"/sync/"` become `""`, `""`, `"/sync"`.
+fn normalize_path(raw: &str) -> Result<String, InviteError> {
+    let trimmed = raw.trim_end_matches('/');
+    if trimmed.is_empty() {
+        return Ok(String::new());
+    }
+    let ok = trimmed.len() <= 128
+        && trimmed.starts_with('/')
+        && trimmed[1..].split('/').all(|seg| {
+            !seg.is_empty()
+                && seg != "."
+                && seg != ".."
+                && seg
+                    .bytes()
+                    .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'.' | b'_' | b'~'))
+        });
+    if ok {
+        Ok(trimmed.to_owned())
+    } else {
+        Err(invalid(
+            "invalid path prefix (use letters, digits and - . _ ~ in segments, e.g. /sync)",
+        ))
+    }
 }
 
 fn valid_authority(a: &str) -> bool {
@@ -106,7 +134,7 @@ fn valid_authority(a: &str) -> bool {
 }
 
 impl Endpoint {
-    /// Parse `FLICKSYNC_PUBLIC_URL` (`http(s)://host[:port][/]`).
+    /// Parse `FLICKSYNC_PUBLIC_URL` (`http(s)://host[:port][/prefix]`).
     pub fn from_public_url(raw: &str) -> Result<Self, InviteError> {
         let raw = raw.trim();
         let (tls, rest) = if let Some(r) = raw.strip_prefix("https://") {
@@ -116,17 +144,24 @@ impl Endpoint {
         } else {
             return Err(invalid("expected an http:// or https:// URL"));
         };
-        let authority = rest.strip_suffix('/').unwrap_or(rest);
-        if authority.contains(['/', '?', '#', '@']) {
+        let (authority, path) = match rest.find('/') {
+            Some(i) => (&rest[..i], &rest[i..]),
+            None => (rest, ""),
+        };
+        if authority.contains(['?', '#', '@']) || path.contains(['?', '#']) {
             return Err(invalid(
-                "expected scheme://host[:port] only (no path, query or credentials)",
+                "expected scheme://host[:port][/prefix] only (no query, fragment or credentials)",
             ));
         }
         let authority = authority.to_ascii_lowercase();
         if !valid_authority(&authority) {
             return Err(invalid("invalid host or port"));
         }
-        Ok(Self { authority, tls })
+        Ok(Self {
+            authority,
+            path: normalize_path(path)?,
+            tls,
+        })
     }
 
     /// Best guess when `FLICKSYNC_PUBLIC_URL` is unset: the bind address (plain http).
@@ -138,16 +173,19 @@ impl Endpoint {
         };
         Self {
             authority: format!("{host}:{port}"),
+            path: String::new(),
             tls: false,
         }
     }
 
-    /// Base URL of the HTTP API (`http(s)://host[:port]`).
+    /// Base URL of the HTTP API (`http(s)://host[:port][/prefix]`). Every API path, `ws_path`
+    /// included, is relative to it.
     pub fn http_base(&self) -> String {
         format!(
-            "{}://{}",
+            "{}://{}{}",
             if self.tls { "https" } else { "http" },
-            self.authority
+            self.authority,
+            self.path
         )
     }
 }
@@ -182,8 +220,9 @@ impl Invitation {
     /// The copyable link.
     pub fn to_url(&self) -> String {
         format!(
-            "{SCHEME}{}/?v={INVITE_VERSION}&tls={}#k={}",
+            "{SCHEME}{}{}/?v={INVITE_VERSION}&tls={}#k={}",
             self.endpoint.authority,
+            self.endpoint.path,
             u8::from(self.endpoint.tls),
             URL_SAFE_NO_PAD.encode(self.key.as_bytes()),
         )
@@ -202,11 +241,11 @@ impl FromStr for Invitation {
             .split_once('#')
             .ok_or_else(|| invalid("invitation has no key (missing #k=...)"))?;
         let (location, query) = before.split_once('?').unwrap_or((before, ""));
-        let authority = match location.split_once('/') {
-            Some((a, "")) => a,
-            Some(_) => return Err(invalid("invitation must not contain a path")),
-            None => location,
+        let (authority, raw_path) = match location.find('/') {
+            Some(i) => (&location[..i], &location[i..]),
+            None => (location, ""),
         };
+        let path = normalize_path(raw_path)?;
         if !valid_authority(authority) {
             return Err(invalid("invalid host or port in invitation"));
         }
@@ -237,6 +276,7 @@ impl FromStr for Invitation {
         Invitation::new(
             Endpoint {
                 authority: authority.to_ascii_lowercase(),
+                path,
                 tls,
             },
             key,
@@ -640,7 +680,9 @@ mod tests {
             format!("flicksync://a.example/?v=2&tls=1#k={enc}"),
             format!("flicksync://a.example/?tls=1#k={enc}"),
             format!("flicksync://a.example/?v=1&tls=2#k={enc}"),
-            format!("flicksync://a.example/x/?v=1&tls=1#k={enc}"),
+            format!("flicksync://a.example/x//y/?v=1&tls=1#k={enc}"),
+            format!("flicksync://a.example/../?v=1&tls=1#k={enc}"),
+            format!("flicksync://a.example/a b/?v=1&tls=1#k={enc}"),
             format!("flicksync://a b/?v=1&tls=1#k={enc}"),
             format!("flicksync://a.example:99999/?v=1&tls=1#k={enc}"),
             "flicksync://a.example/?v=1&tls=1#k=!!!".to_owned(),
@@ -656,6 +698,45 @@ mod tests {
             .parse::<Invitation>()
             .unwrap_err();
         assert!(matches!(err, InviteError::Unsupported(_)));
+    }
+
+    #[test]
+    fn a_path_prefix_round_trips_and_is_normalised() {
+        for (url, path, base) in [
+            (
+                "https://flick.example.com/sync",
+                "/sync",
+                "https://flick.example.com/sync",
+            ),
+            (
+                "https://flick.example.com/sync/",
+                "/sync",
+                "https://flick.example.com/sync",
+            ),
+            (
+                "http://h:8080/a/b-c_d.e~f",
+                "/a/b-c_d.e~f",
+                "http://h:8080/a/b-c_d.e~f",
+            ),
+            (
+                "https://flick.example.com/",
+                "",
+                "https://flick.example.com",
+            ),
+        ] {
+            let ep = Endpoint::from_public_url(url).unwrap();
+            assert_eq!(ep.path, path, "{url}");
+            assert_eq!(ep.http_base(), base);
+            let inv = Invitation::new(ep, sample_key()).unwrap();
+            let link = inv.to_url();
+            assert!(link.starts_with(&format!(
+                "flicksync://{}{}/?v=1&tls=",
+                inv.endpoint.authority, path
+            )));
+            let parsed: Invitation = link.parse().unwrap();
+            assert_eq!(parsed, inv);
+            assert_eq!(parsed.endpoint.http_base(), base);
+        }
     }
 
     #[test]
@@ -675,7 +756,10 @@ mod tests {
             "ftp://x",
             "sync.example.com",
             "https://",
-            "https://a/b",
+            "https://a/b c",
+            "https://a/../x",
+            "https://a//x",
+            "https://a/x?y=1",
             "https://a?x=1",
             "https://u:p@a",
             "https://a:0",

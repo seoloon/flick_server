@@ -29,7 +29,8 @@ pub struct RoomAccess {
     pub share_code: String,
     pub participant_id: String,
     pub host_id: String,
-    /// Path of the WebSocket endpoint, relative to the server origin.
+    /// Path of the WebSocket endpoint, relative to the API base URL: the invitation address, with
+    /// its path prefix when the service sits behind a proxy under one.
     pub ws_path: String,
     pub room: RoomView,
 }

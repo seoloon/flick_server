@@ -19,14 +19,14 @@ WebSocket, tokens JWT HS256, `aud=flicksync`) **ne change pas**. `/health` et `/
 ## 2. Format (v=1)
 
 ```
-flicksync://<host>[:<port>]/?v=1&tls=<0|1>#k=<clé>
+flicksync://<host>[:<port>][/<préfixe>]/?v=1&tls=<0|1>#k=<clé>
 ```
 
 | Élément | Règle |
 |---|---|
 | `<host>` | nom DNS, IPv4, ou IPv6 entre crochets (`[::1]`), en minuscules |
 | `<port>` | optionnel, entier 1 à 65535 |
-| chemin | toujours `/` (ou absent). Tout autre chemin : lien invalide |
+| `<préfixe>` | optionnel : chemin sous lequel un reverse proxy sert FlickSync (ex. `/sync`). Un ou plusieurs segments de `A-Za-z0-9 - . _ ~`, sans segment vide, `.` ni `..`. Le chemin se termine toujours par `/` avant le `?`. Sans préfixe, le chemin est simplement `/` |
 | `v` | entier, requis. Le client **refuse** toute valeur autre que `1` (message « mettez le client à jour ») |
 | `tls` | requis : `1` = `https`/`wss`, `0` = `http`/`ws`. Autre valeur : invalide |
 | `k` (dans le **fragment**) | base64url **sans padding** (RFC 4648 §5) de la chaîne UTF-8 `kid:server_id:secret` |
@@ -45,12 +45,13 @@ fn parse_invitation(s: &str) -> Result<Invitation, InviteError> {
     let rest = s.strip_prefix("flicksync://").ok_or(NotAnInvitation)?;
     let (before, fragment) = rest.split_once('#').ok_or(MissingKey)?;
     let (location, query) = before.split_once('?').unwrap_or((before, ""));
-    let authority = match location.split_once('/') {
-        Some((a, "")) => a,
-        Some(_) => return Err(PathNotAllowed),
-        None => location,
+    let (authority, raw_path) = match location.find('/') {
+        Some(i) => (&location[..i], &location[i..]),         // "/sync/" ou "/"
+        None => (location, ""),
     };
     validate_authority(authority)?;                          // host + port optionnel, voir ci-dessus
+    let path = raw_path.trim_end_matches('/');               // "/sync" ou ""
+    validate_path(path)?;                                    // segments non vides, [A-Za-z0-9-._~], ni "." ni ".."
 
     let param = |text: &str, name: &str| text.split('&')
         .filter_map(|kv| kv.split_once('=')).find(|(k, _)| *k == name).map(|(_, v)| v);
@@ -71,11 +72,15 @@ sans `:`).
 
 | Usage | Valeur |
 |---|---|
-| Base API REST | `http(s)://<host>[:<port>]` selon `tls` |
-| WebSocket | `ws(s)://<host>[:<port>]/api/v1/rooms/{room_id}/ws` |
+| Base API REST | `http(s)://<host>[:<port>]<préfixe>` selon `tls` (préfixe sans slash final, vide s'il n'y en a pas) |
+| WebSocket | `ws(s)://<host>[:<port>]<préfixe>/api/v1/rooms/{room_id}/ws` |
 | Diagnostic | `GET <base>/health` (200 = vivant), `GET <base>/ready` (200 = prêt, 503 = pas encore de clé chargée) |
 
-Ne pas ajouter de slash final ni de chemin à la base.
+Ne pas ajouter de slash final à la base. **Tous les chemins de l'API sont relatifs à cette base, préfixe compris** :
+`/api/v1/...`, `/health`, `/ready`, et aussi le `ws_path` renvoyé par la création de salon (qui est `/api/v1/rooms/{id}/ws`,
+sans le préfixe : le serveur est derrière un proxy qui l'enlève). Exemple avec `flicksync://flick.example.com/sync/?v=1&tls=1#k=...` :
+base `https://flick.example.com/sync`, santé `https://flick.example.com/sync/health`,
+WebSocket `wss://flick.example.com/sync/api/v1/rooms/{id}/ws`.
 
 ## 4. Jetons
 
@@ -147,7 +152,9 @@ Cas à tester côté client (tous doivent être acceptés ou refusés comme indi
 | sans `#k=` | refusé (clé absente) |
 | `v=2` | refusé (version non supportée) |
 | `tls=2` ou `tls` absent | refusé |
-| chemin `/x/` | refusé |
+| `flicksync://flick.example.com/sync/?v=1&tls=1#k=<clé>` | accepté, préfixe `/sync`, base `https://flick.example.com/sync` |
+| `flicksync://a.example/sync?v=1...` (sans slash final) ou préfixe `/a/b/` | accepté (normalisé en `/sync`, `/a/b`) |
+| chemin `/x//y/`, `/../`, `/a b/` | refusé |
 | port `99999` ou `0` | refusé |
 | `k` en base64 invalide, ou décodé sans 3 parties, ou secret de moins de 32 caractères | refusé |
 

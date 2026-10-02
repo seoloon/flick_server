@@ -470,6 +470,7 @@ mod tests {
         let p = c.public.unwrap();
         assert!(p.tls);
         assert_eq!(p.authority, "sync.example.com");
+        assert_eq!(p.path, "");
         assert_eq!(c.data_dir, "/data");
         let e = cfg(&[("FLICKSYNC_PUBLIC_URL", "ftp://x")]).unwrap_err();
         assert!(e.to_string().contains("FLICKSYNC_PUBLIC_URL"));
