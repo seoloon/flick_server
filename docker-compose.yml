@@ -12,8 +12,9 @@ services:
     restart: unless-stopped
     env_file:
       - .env
-    ports:
-      - "${FLICKSYNC_PORT:-8787}:${FLICKSYNC_PORT:-8787}"
+    # Reachable by the reverse proxy / other containers; publish a host port yourself if you need one.
+    expose:
+      - "${FLICKSYNC_PORT:-8787}"
     volumes:
       # Holds the auto-generated signing key (the only thing the service ever writes).
       - flicksync-data:/data
@@ -26,7 +27,7 @@ services:
     stop_grace_period: 15s
 
   # Optional web panel (Next.js). ENABLE_WEB_PANEL=false (the default) makes the container exit
-  # right away and publish nothing; ENABLE_WEB_PANEL=true serves it on PANEL_PORT (default 3000).
+  # right away and publish nothing; ENABLE_WEB_PANEL=true serves it on port 3000.
   panel:
     build:
       context: .
@@ -39,8 +40,8 @@ services:
       FLICKSYNC_URL: http://flicksync:8787
     depends_on:
       - flicksync
-    ports:
-      - "${PANEL_PORT:-3000}:3000"
+    expose:
+      - "3000"
     read_only: true
     tmpfs:
       - /tmp

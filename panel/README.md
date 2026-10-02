@@ -20,8 +20,7 @@ FLICKSYNC_ADMIN_TOKEN=<16+ characters>   # shared secret between the panel and F
 Generate the secrets with `openssl rand -base64 18` and `openssl rand -base64 32`.
 
 * `ENABLE_WEB_PANEL=false` (the default): the process logs one line and exits `0`. Nothing listens.
-* `true`: the panel serves on port **3000** (`PANEL_PORT` changes the published host port with Docker,
-  `PORT` changes it otherwise). It refuses to start without a real password and admin token.
+* `true`: the panel serves on port **3000** (`PORT` changes it; compose only exposes it to the other containers and the reverse proxy). It refuses to start without a real password and admin token.
 
 ### Docker Compose
 
@@ -52,7 +51,6 @@ Development: `npm run dev` (port 3000). Checks: `npm run typecheck`, `npm test`.
 | `FLICKSYNC_ADMIN_TOKEN` | none | Bearer token of FlickSync's [admin API](../docs/admin-api.md); must equal the value set on FlickSync |
 | `FLICKSYNC_URL` | `http://localhost:8787` | Where the panel reaches FlickSync (set by compose) |
 | `PORT` | `3000` | Listening port inside the process |
-| `PANEL_PORT` | `3000` | Published host port (compose only) |
 
 ## Security model
 
