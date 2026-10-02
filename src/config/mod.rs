@@ -60,6 +60,8 @@ pub struct HttpConfig {
     pub allowed_origins: Vec<String>,
     pub metrics_enabled: bool,
     pub metrics_token: Option<String>,
+    /// Bearer token of the admin API (`/admin/v1/*`); `None` = admin API disabled (404).
+    pub admin_token: Option<String>,
     pub max_body_bytes: usize,
 }
 
@@ -322,8 +324,16 @@ impl Config {
             allowed_origins: parse_list(env, "FLICKSYNC_CORS_ORIGINS"),
             metrics_enabled: parse_bool(env, "FLICKSYNC_METRICS_ENABLED", false)?,
             metrics_token: env("FLICKSYNC_METRICS_TOKEN").filter(|t| !t.trim().is_empty()),
+            admin_token: env("FLICKSYNC_ADMIN_TOKEN")
+                .map(|t| t.trim().to_owned())
+                .filter(|t| !t.is_empty()),
             max_body_bytes: parse(env, "FLICKSYNC_MAX_BODY_BYTES", 16 * 1024)?,
         };
+        if http.admin_token.as_ref().is_some_and(|t| t.len() < 16) {
+            return Err(inconsistent(
+                "FLICKSYNC_ADMIN_TOKEN must be at least 16 characters (e.g. `openssl rand -base64 32`)",
+            ));
+        }
         if http.allowed_origins.iter().any(|o| o == "*") {
             return Err(inconsistent(
                 "FLICKSYNC_CORS_ORIGINS must list explicit origins; '*' is not allowed because requests are authenticated",
@@ -463,6 +473,21 @@ mod tests {
         assert_eq!(c.data_dir, "/data");
         let e = cfg(&[("FLICKSYNC_PUBLIC_URL", "ftp://x")]).unwrap_err();
         assert!(e.to_string().contains("FLICKSYNC_PUBLIC_URL"));
+    }
+
+    #[test]
+    fn admin_token_is_optional_but_not_weak() {
+        assert!(cfg(&[]).unwrap().http.admin_token.is_none());
+        assert!(
+            cfg(&[("FLICKSYNC_ADMIN_TOKEN", "  ")])
+                .unwrap()
+                .http
+                .admin_token
+                .is_none()
+        );
+        assert!(cfg(&[("FLICKSYNC_ADMIN_TOKEN", "short")]).is_err());
+        let c = cfg(&[("FLICKSYNC_ADMIN_TOKEN", "0123456789abcdef0123")]).unwrap();
+        assert_eq!(c.http.admin_token.as_deref(), Some("0123456789abcdef0123"));
     }
 
     #[test]

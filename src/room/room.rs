@@ -5,7 +5,9 @@ use std::sync::Arc;
 
 use tracing::{debug, info};
 
-use super::{HostLeavePolicy, Outcome, ParticipantInfo, RoomConfig};
+use super::{
+    AdminParticipant, AdminRoomView, HostLeavePolicy, Outcome, ParticipantInfo, RoomConfig,
+};
 use crate::chat::ChatLog;
 use crate::errors::{Error, ErrorCode, Result};
 use crate::protocol::{
@@ -18,6 +20,14 @@ use crate::ratelimit::TokenBucket;
 use crate::sync::clock::{Millis, Time};
 use crate::sync::drift::{Canonical, Correction, DriftTracker};
 use crate::sync::playback::PlaybackState;
+
+/// Serialized name of a plain enum (`snake_case` wire form).
+fn enum_name<T: serde::Serialize>(v: &T) -> String {
+    serde_json::to_value(v)
+        .ok()
+        .and_then(|v| v.as_str().map(str::to_owned))
+        .unwrap_or_default()
+}
 
 struct Participant {
     info: ParticipantInfo,
@@ -187,6 +197,51 @@ impl Room {
             playback: self.playback.snapshot(now),
             created_at: self.created_at,
         }
+    }
+
+    /// Operator view (admin API).
+    pub fn admin_view(&self, now: Time) -> AdminRoomView {
+        let mut ps: Vec<(u64, AdminParticipant)> = self
+            .participants
+            .values()
+            .map(|p| {
+                (
+                    p.join_order,
+                    AdminParticipant {
+                        participant_id: p.info.id.clone(),
+                        display_name: p.info.display_name.clone(),
+                        presence: p.presence,
+                        is_host: p.info.id == self.host,
+                        joined_at: p.joined_at,
+                        rtt_ms: p.tracker.rtt_ms(),
+                    },
+                )
+            })
+            .collect();
+        ps.sort_by_key(|(order, _)| *order);
+        AdminRoomView {
+            room_id: self.id.clone(),
+            state: self.lifecycle(),
+            host_id: self.host.clone(),
+            control_mode: self.control_mode,
+            chat_enabled: self.chat_enabled,
+            max_participants: self.cfg.max_participants,
+            participants: ps.into_iter().map(|(_, p)| p).collect(),
+            media_title: self.media.as_ref().and_then(|m| m.title.clone()),
+            media_provider: self.media.as_ref().map(|m| enum_name(&m.provider)),
+            media_type: self.media.as_ref().map(|m| enum_name(&m.media_type)),
+            playback: self.playback.snapshot(now),
+            created_at: self.created_at,
+            age_secs: now.wall_ms.saturating_sub(self.created_at) / 1000,
+            idle_secs: now.mono_ms.saturating_sub(self.last_activity) / 1000,
+        }
+    }
+
+    /// Close the room on behalf of the operator.
+    pub fn admin_close(&mut self) -> Outcome {
+        let mut out = Outcome::default();
+        self.close(ClosedReason::AdminClosed, &mut out);
+        out
     }
 
     // ------------------------------------------------------------ membership
@@ -642,11 +697,15 @@ impl Room {
             return Ok(());
         }
         let eval = p.tracker.on_report(&cfg.drift, now, canonical, position);
+        out.drift_ms = Some(eval.drift_ms.abs());
         let Some(correction) = eval.correction else {
             return Ok(());
         };
         debug!(room_id = %self.id, participant_id = %pid, drift_ms = eval.drift_ms, ?correction, "sync correction");
         out.corrections += 1;
+        if matches!(correction, Correction::Seek { .. }) {
+            out.seeks += 1;
+        }
         let payload = match correction {
             Correction::AdjustRate { rate, duration_ms } => SyncCorrectionPayload {
                 action: CorrectionAction::AdjustRate,

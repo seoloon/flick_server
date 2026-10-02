@@ -2,7 +2,7 @@
 
 use std::net::SocketAddr;
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use axum::Router;
 use tokio::net::TcpListener;
@@ -23,6 +23,7 @@ pub struct AppState {
     pub auth: Arc<Authenticator>,
     pub metrics: Arc<Metrics>,
     pub conn_limit: Arc<Semaphore>,
+    pub started_at: Instant,
 }
 
 impl AppState {
@@ -45,6 +46,7 @@ impl AppState {
             auth,
             metrics,
             conn_limit,
+            started_at: Instant::now(),
         })
     }
 }

@@ -1,8 +1,12 @@
 //! Minimal in-process metrics (plain atomics) with an optional Prometheus text rendering.
 //! No metrics crate: the surface is small and the exposition format is trivial.
 
+use std::collections::VecDeque;
 use std::fmt::Write;
+use std::sync::Mutex;
 use std::sync::atomic::{AtomicU64, Ordering};
+
+use serde::Serialize;
 
 #[derive(Default)]
 pub struct Counter(AtomicU64);
@@ -56,6 +60,71 @@ pub struct Metrics {
     pub auth_failures_total: Counter,
     pub rate_limited_total: Counter,
     pub malformed_messages_total: Counter,
+    /// Drift corrections that were hard seeks (the rest are rate adjustments).
+    pub sync_seeks_total: Counter,
+    /// Sync reports that were evaluated against the room clock.
+    pub sync_reports_total: Counter,
+    /// Evaluated reports by absolute drift: below ignore, below soft, below hard, hard and above.
+    pub drift_buckets: [Counter; 4],
+    pub history: History,
+}
+
+/// One point of the rolling history (cumulative counters; consumers compute rates).
+#[derive(Debug, Clone, Serialize)]
+pub struct Sample {
+    /// Wall clock, ms since the Unix epoch.
+    pub t: u64,
+    pub rooms: u64,
+    pub participants: u64,
+    pub connections: u64,
+    pub rtt_ms: f64,
+    pub messages_in: u64,
+    pub corrections: u64,
+    pub seeks: u64,
+    pub reports: u64,
+}
+
+/// Fixed-size ring of samples: bounded memory, no external store.
+pub struct History {
+    samples: Mutex<VecDeque<Sample>>,
+}
+
+impl Default for History {
+    fn default() -> Self {
+        Self {
+            samples: Mutex::new(VecDeque::with_capacity(Self::CAPACITY)),
+        }
+    }
+}
+
+impl History {
+    /// One hour at one sample every 10 s.
+    pub const CAPACITY: usize = 360;
+    pub const INTERVAL_MS: u64 = 10_000;
+
+    /// Append `s` unless the previous sample is younger than the interval. Returns true when stored.
+    pub fn record(&self, s: Sample) -> bool {
+        let mut q = self.samples.lock().unwrap_or_else(|e| e.into_inner());
+        if q.back()
+            .is_some_and(|l| s.t.saturating_sub(l.t) < Self::INTERVAL_MS)
+        {
+            return false;
+        }
+        if q.len() == Self::CAPACITY {
+            q.pop_front();
+        }
+        q.push_back(s);
+        true
+    }
+
+    pub fn snapshot(&self) -> Vec<Sample> {
+        self.samples
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .iter()
+            .cloned()
+            .collect()
+    }
 }
 
 impl Metrics {
@@ -115,6 +184,18 @@ impl Metrics {
             self.sync_corrections_total.get() as f64,
         );
         put(
+            "sync_seeks_total",
+            "counter",
+            "Drift corrections that were hard seeks",
+            self.sync_seeks_total.get() as f64,
+        );
+        put(
+            "sync_reports_total",
+            "counter",
+            "Sync reports evaluated against the room clock",
+            self.sync_reports_total.get() as f64,
+        );
+        put(
             "auth_failures_total",
             "counter",
             "Failed authentications",
@@ -149,6 +230,30 @@ mod tests {
         g.inc();
         g.dec();
         assert_eq!(g.get(), 1);
+    }
+
+    #[test]
+    fn history_is_bounded_and_rate_limited() {
+        let h = History::default();
+        let s = |t| Sample {
+            t,
+            rooms: 0,
+            participants: 0,
+            connections: 0,
+            rtt_ms: 0.0,
+            messages_in: 0,
+            corrections: 0,
+            seeks: 0,
+            reports: 0,
+        };
+        assert!(h.record(s(0)));
+        assert!(!h.record(s(History::INTERVAL_MS - 1)), "too soon");
+        for i in 1..(History::CAPACITY as u64 + 20) {
+            assert!(h.record(s(i * History::INTERVAL_MS)));
+        }
+        let snap = h.snapshot();
+        assert_eq!(snap.len(), History::CAPACITY);
+        assert!(snap.windows(2).all(|w| w[0].t < w[1].t));
     }
 
     #[test]

@@ -408,6 +408,23 @@ pub fn qr(text: &str) -> Option<String> {
     Some(code.render::<Dense1x2>().quiet_zone(true).build())
 }
 
+/// QR code as rows of `'1'` (dark) / `'0'` (light) modules, for clients that draw it themselves.
+pub fn qr_modules(text: &str) -> Option<Vec<String>> {
+    use qrcode::Color;
+    let code = qrcode::QrCode::new(text.as_bytes()).ok()?;
+    let w = code.width();
+    Some(
+        code.to_colors()
+            .chunks(w)
+            .map(|row| {
+                row.iter()
+                    .map(|c| if *c == Color::Dark { '1' } else { '0' })
+                    .collect()
+            })
+            .collect(),
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

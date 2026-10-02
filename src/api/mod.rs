@@ -1,5 +1,6 @@
 //! HTTP API (REST) and router assembly.
 
+pub mod admin;
 pub mod auth;
 pub mod error;
 pub mod health;
@@ -10,7 +11,7 @@ use std::time::Duration;
 use axum::Router;
 use axum::extract::DefaultBodyLimit;
 use axum::http::{HeaderValue, Method, header};
-use axum::routing::{get, post};
+use axum::routing::{delete, get, post};
 use tower_http::cors::{AllowOrigin, CorsLayer};
 
 use crate::app::AppState;
@@ -24,6 +25,11 @@ pub fn router(state: AppState) -> Router {
         .route("/health", get(health::health))
         .route("/ready", get(health::ready))
         .route("/metrics", get(health::metrics))
+        .route("/admin/v1/overview", get(admin::overview))
+        .route("/admin/v1/invite", get(admin::invite))
+        .route("/admin/v1/rooms", get(admin::list_rooms))
+        .route("/admin/v1/rooms/{room_id}", delete(admin::close_room))
+        .route("/admin/v1/stats", get(admin::stats))
         .route("/api/v1/rooms", post(rooms::create_room))
         .route("/api/v1/rooms/{room_id}", get(rooms::get_room))
         .route("/api/v1/rooms/{room_id}/join", post(rooms::join_room))

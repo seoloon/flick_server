@@ -21,10 +21,10 @@ use rand::RngExt;
 use tokio::sync::mpsc;
 use tracing::{debug, info, warn};
 
-use super::{Outcome, ParticipantInfo, Room, RoomConfig, Target};
+use super::{AdminRoomView, Outcome, ParticipantInfo, Room, RoomConfig, Target};
 use crate::auth::{Identity, PERM_CHAT, PERM_CREATE_ROOM, PERM_JOIN_ROOM};
 use crate::errors::{Error, ErrorCode, Result};
-use crate::metrics::Metrics;
+use crate::metrics::{Metrics, Sample};
 use crate::protocol::{ClientMessage, ControlMode, RoomView};
 use crate::ratelimit::TokenBucket;
 use crate::sync::clock::{Clock, Time};
@@ -454,6 +454,53 @@ impl RoomManager {
 
         let now = self.clock.now();
         lock(&self.create_limits).retain(|_, b| !b.is_idle(now.mono_ms));
+
+        let m = &self.metrics;
+        m.history.record(Sample {
+            t: now.wall_ms,
+            rooms: m.rooms_active.get(),
+            participants: m.participants_active.get(),
+            connections: m.ws_connections.get(),
+            rtt_ms: avg,
+            messages_in: m.messages_in_total.get(),
+            corrections: m.sync_corrections_total.get(),
+            seeks: m.sync_seeks_total.get(),
+            reports: m.sync_reports_total.get(),
+        });
+    }
+
+    // ------------------------------------------------------------ operator (admin API)
+
+    /// Every live room, newest first.
+    pub fn admin_rooms(&self) -> Vec<AdminRoomView> {
+        let entries: Vec<Arc<Mutex<RoomEntry>>> = {
+            let map = self.rooms.read().unwrap_or_else(|e| e.into_inner());
+            map.values().cloned().collect()
+        };
+        let now = self.clock.now();
+        let mut rooms: Vec<AdminRoomView> = entries
+            .iter()
+            .map(|e| lock(e).room.admin_view(now))
+            .collect();
+        rooms.sort_by(|a, b| {
+            b.created_at
+                .cmp(&a.created_at)
+                .then(a.room_id.cmp(&b.room_id))
+        });
+        rooms
+    }
+
+    /// Force-close a room (frozen or abusive): everybody gets `room_closed` / `admin_closed`.
+    pub fn admin_close_room(&self, room_id: &str) -> Result<()> {
+        let (id, entry) = self.entry(room_id)?;
+        let now = self.clock.now();
+        let mut g = lock(&entry);
+        let out = g.room.admin_close();
+        let closed = self.dispatch(&mut g, now, out);
+        drop(g);
+        self.finish(&id, &entry, closed);
+        info!(room_id = %id, "room closed by an operator");
+        Ok(())
     }
 
     /// Stop accepting new work and close every room and connection.
@@ -501,6 +548,21 @@ impl RoomManager {
             self.metrics
                 .sync_corrections_total
                 .add(outcome.corrections as u64);
+            self.metrics.sync_seeks_total.add(outcome.seeks as u64);
+            if let Some(d) = outcome.drift_ms {
+                let t = &self.cfg.room.drift;
+                let bucket = if d < t.ignore_ms {
+                    0
+                } else if d < t.soft_ms {
+                    1
+                } else if d < t.hard_ms {
+                    2
+                } else {
+                    3
+                };
+                self.metrics.sync_reports_total.inc();
+                self.metrics.drift_buckets[bucket].inc();
+            }
 
             let mut dead: Vec<String> = Vec::new();
             for delivery in outcome.deliveries.drain(..) {

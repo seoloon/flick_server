@@ -66,6 +66,8 @@ pub enum ClosedReason {
     Expired,
     Empty,
     Shutdown,
+    /// Closed by the server operator (web panel / admin API).
+    AdminClosed,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

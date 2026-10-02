@@ -16,8 +16,10 @@ mod tests;
 use serde::{Deserialize, Serialize};
 
 use crate::chat::ChatConfig;
-use crate::protocol::{ControlMode, ServerMessage};
+use crate::protocol::{ControlMode, Presence, RoomLifecycle, ServerMessage};
 use crate::sync::DriftConfig;
+use crate::sync::clock::Millis;
+use crate::sync::playback::PlaybackSnapshot;
 
 pub use manager::{Attachment, CloseReason, CreatedRoom, Outbound, RoomManager};
 pub use room::Room;
@@ -89,6 +91,39 @@ pub struct ParticipantInfo {
     pub can_chat: bool,
 }
 
+/// Operator view of a room (admin API): everything the panel lists, nothing a client may not see
+/// except display names and measured latency.
+#[derive(Debug, Clone, Serialize)]
+pub struct AdminRoomView {
+    pub room_id: String,
+    pub state: RoomLifecycle,
+    pub host_id: String,
+    pub control_mode: ControlMode,
+    pub chat_enabled: bool,
+    pub max_participants: usize,
+    pub participants: Vec<AdminParticipant>,
+    pub media_title: Option<String>,
+    pub media_provider: Option<String>,
+    pub media_type: Option<String>,
+    pub playback: PlaybackSnapshot,
+    pub created_at: Millis,
+    /// Seconds since the room was created.
+    pub age_secs: u64,
+    /// Seconds since the last client message.
+    pub idle_secs: u64,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct AdminParticipant {
+    pub participant_id: String,
+    pub display_name: String,
+    pub presence: Presence,
+    pub is_host: bool,
+    pub joined_at: Millis,
+    /// Smoothed round-trip time reported by this client, when known.
+    pub rtt_ms: Option<f64>,
+}
+
 /// Who a message is for.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Target {
@@ -114,6 +149,10 @@ pub struct Outcome {
     pub closed: bool,
     /// Number of drift corrections issued (metrics).
     pub corrections: u32,
+    /// How many of those were hard seeks (metrics).
+    pub seeks: u32,
+    /// Absolute drift of the sync report evaluated by this operation, if any (metrics).
+    pub drift_ms: Option<f64>,
 }
 
 impl Outcome {

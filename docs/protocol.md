@@ -249,7 +249,7 @@ Sent to **one** participant, only when its drift needs fixing.
 `{ "host_id", "control_mode", "chat_enabled", "state", "reason": "host_changed" | "settings_changed" }`.
 
 ### `room_closed`
-`{ "reason": "host_closed" | "host_left" | "expired" | "empty" | "shutdown" }`. The server then closes the socket with code 4003 (also on `shutdown`: rooms live in memory, so they do not survive a restart).
+`{ "reason": "host_closed" | "host_left" | "expired" | "empty" | "shutdown" | "admin_closed" }` (`admin_closed`: an operator closed the room from the web panel; clients must treat unknown reasons as a plain close). The server then closes the socket with code 4003 (also on `shutdown`: rooms live in memory, so they do not survive a restart).
 
 ### `chat_message`
 `{ "id": 17, "room_id": "…", "sender_id": "bob", "sender_name": "Bob", "text": "hello", "timestamp": 1790887546683 }`.
