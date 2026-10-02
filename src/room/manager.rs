@@ -12,6 +12,7 @@
 //! operation (room ownership, routing, fan-out) sits behind this type; see
 //! `docs/scaling.md`.
 
+use std::borrow::Cow;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, RwLock};
@@ -120,12 +121,21 @@ fn not_found() -> Error {
 
 /// Canonical form of a room id: upper case, no separators. `None` if malformed.
 pub fn normalize_room_id(input: &str) -> Option<String> {
+    canonical_room_id(input).map(Cow::into_owned)
+}
+
+/// Like [`normalize_room_id`] but borrows when `input` is already canonical (hot path).
+fn canonical_room_id(input: &str) -> Option<Cow<'_, str>> {
+    if input.len() == ROOM_ID_LEN && input.bytes().all(|b| ROOM_ID_ALPHABET.contains(&b)) {
+        return Some(Cow::Borrowed(input));
+    }
     let id: String = input
         .chars()
         .filter(|c| *c != '-')
         .map(|c| c.to_ascii_uppercase())
         .collect();
-    (id.len() == ROOM_ID_LEN && id.bytes().all(|b| ROOM_ID_ALPHABET.contains(&b))).then_some(id)
+    (id.len() == ROOM_ID_LEN && id.bytes().all(|b| ROOM_ID_ALPHABET.contains(&b)))
+        .then_some(Cow::Owned(id))
 }
 
 /// Human-friendly grouping, e.g. `K7M2-Q9XP-4TWB`.
@@ -183,10 +193,10 @@ impl RoomManager {
         self.rooms.read().unwrap_or_else(|e| e.into_inner()).len()
     }
 
-    fn entry(&self, room_id: &str) -> Result<(String, Arc<Mutex<RoomEntry>>)> {
-        let id = normalize_room_id(room_id).ok_or_else(not_found)?;
+    fn entry<'a>(&self, room_id: &'a str) -> Result<(Cow<'a, str>, Arc<Mutex<RoomEntry>>)> {
+        let id = canonical_room_id(room_id).ok_or_else(not_found)?;
         let map = self.rooms.read().unwrap_or_else(|e| e.into_inner());
-        let e = map.get(&id).cloned().ok_or_else(not_found)?;
+        let e = map.get(id.as_ref()).cloned().ok_or_else(not_found)?;
         Ok((id, e))
     }
 
@@ -413,13 +423,13 @@ impl RoomManager {
 
     /// Run time-driven maintenance on every room. Called periodically by the server.
     pub fn sweep(&self) {
-        let entries: Vec<(String, Arc<Mutex<RoomEntry>>)> = {
+        let entries: Vec<Arc<Mutex<RoomEntry>>> = {
             let map = self.rooms.read().unwrap_or_else(|e| e.into_inner());
-            map.iter().map(|(k, v)| (k.clone(), v.clone())).collect()
+            map.values().cloned().collect()
         };
         let mut participants = 0u64;
         let (mut rtt_sum, mut rtt_n) = (0.0f64, 0u32);
-        for (id, entry) in entries {
+        for entry in entries {
             let now = self.clock.now();
             let mut g = lock(&entry);
             let out = g.room.tick(now);
@@ -428,8 +438,11 @@ impl RoomManager {
             let (s, n) = g.room.rtt_stats();
             rtt_sum += s;
             rtt_n += n;
+            let id = closed.then(|| g.room.id().to_owned());
             drop(g);
-            self.finish(&id, &entry, closed);
+            if let Some(id) = id {
+                self.finish(&id, &entry, true);
+            }
         }
         self.metrics.participants_active.set(participants);
         let avg = if rtt_n > 0 {
@@ -491,6 +504,14 @@ impl RoomManager {
 
             let mut dead: Vec<String> = Vec::new();
             for delivery in outcome.deliveries.drain(..) {
+                let has_recipient = match &delivery.target {
+                    Target::All => !entry.conns.is_empty(),
+                    Target::AllExcept(skip) => entry.conns.keys().any(|p| p != skip),
+                    Target::Only(pid) => entry.conns.contains_key(pid),
+                };
+                if !has_recipient {
+                    continue;
+                }
                 let text: Arc<str> = delivery.message.to_json().into();
                 let send = |conn: &Conn| conn.tx.try_send(Outbound::Text(text.clone())).is_ok();
                 match &delivery.target {

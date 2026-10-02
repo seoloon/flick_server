@@ -645,7 +645,7 @@ impl Room {
         let Some(correction) = eval.correction else {
             return Ok(());
         };
-        info!(room_id = %self.id, participant_id = %pid, drift_ms = eval.drift_ms, ?correction, "sync correction");
+        debug!(room_id = %self.id, participant_id = %pid, drift_ms = eval.drift_ms, ?correction, "sync correction");
         out.corrections += 1;
         let payload = match correction {
             Correction::AdjustRate { rate, duration_ms } => SyncCorrectionPayload {
