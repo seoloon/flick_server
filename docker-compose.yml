@@ -1,7 +1,8 @@
 # Minimal deployment: one container, everything in memory, no database, no Redis.
 #
-#   cp .env.example .env     # set FLICKSYNC_AUTH_KEYS at least
+#   cp .env.example .env     # set FLICKSYNC_PUBLIC_URL (https://your.domain)
 #   docker compose up -d --build
+#   docker compose exec flicksync flicksync invite   # the one-link invitation for Flick
 services:
   flicksync:
     build: .
@@ -11,10 +12,16 @@ services:
       - .env
     ports:
       - "${FLICKSYNC_PORT:-8787}:${FLICKSYNC_PORT:-8787}"
-    # Hardening (the service needs no filesystem writes and no privileges).
+    volumes:
+      # Holds the auto-generated signing key (the only thing the service ever writes).
+      - flicksync-data:/data
+    # Hardening (read-only root filesystem, no privileges).
     read_only: true
     cap_drop: [ALL]
     security_opt:
       - no-new-privileges:true
     # Allow sockets to drain on SIGTERM (FLICKSYNC_SHUTDOWN_GRACE defaults to 10s).
     stop_grace_period: 15s
+
+volumes:
+  flicksync-data:

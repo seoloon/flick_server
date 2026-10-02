@@ -37,7 +37,8 @@ Claims : { "sub": "<flick user id>", "server_id": "<this Flick Server's id>", "a
            "iat": 1790887000, "exp": 1790890600 }
 ```
 
-FlickSync is configured with the matching key: `FLICKSYNC_AUTH_KEYS=main:<server_id>:<secret>`.
+FlickSync is configured with the matching key: by default an auto-generated one (see
+[Invitation link](#invitation-link)), or explicitly `FLICKSYNC_AUTH_KEYS=main:<server_id>:<secret>`.
 Rules enforced by FlickSync: HS256 only; `kid` must be known; `server_id` must equal the one bound to
 that key (so a client or another Flick Server cannot impersonate this one); `aud` must match; the token
 must not be expired, nor valid for longer than `FLICKSYNC_AUTH_MAX_TOKEN_TTL` (default 24 h). Use 1 hour or less.
@@ -68,7 +69,54 @@ For a quick manual test without a Flick Server:
 Give *view-only* users `perms: ["rooms:join"]`; leave out `chat:send` to mute someone.
 Nothing is granted by default.
 
+### Invitation link
+
+Instead of copying the URL and the key separately, the FlickSync operator gives users one link. The server
+generates it (startup banner, `flicksync invite`); the client parses it. **This section is the normative format.**
+
+```
+flicksync://<host>[:<port>]/?v=1&tls=<0|1>#k=<key>
+```
+
+| Part | Meaning |
+|---|---|
+| `<host>[:<port>]` | Public address. Host: DNS name, IPv4, or IPv6 in brackets (`[::1]`). Port optional (1-65535). Lower case. |
+| path | Always `/`. Anything else is invalid. |
+| `v` | Format version, an integer. This document describes `1`. A client must reject versions it does not know. |
+| `tls` | `1` = `https://` and `wss://`, `0` = `http://` and `ws://`. Required. |
+| `k` (fragment) | **base64url without padding** (RFC 4648 section 5) of the UTF-8 string `kid:server_id:secret`. |
+
+Rules for the client:
+
+* Parse by hand rather than with a generic URL parser (unknown scheme, fragment handling). Split the string after
+  `flicksync://` at the first `#` (fragment) and at the first `?` (query); split query and fragment on `&` into
+  `name=value`. **Ignore unknown parameters** (forward compatibility); require `v`, `tls`, `k`.
+* Decode `k`, then split on the first two `:` only (the secret is the rest, as `SigningKey::parse` does).
+  `kid` and `server_id`: 1-128 characters of `A-Za-z0-9 - _ . : @`; `secret`: at least 32 characters.
+* API base URL: `http(s)://<host>[:<port>]` (per `tls`); WebSocket: same host with `ws(s)://`.
+  Example: `flicksync://sync.example.com/?v=1&tls=1#k=...` gives `https://sync.example.com` and
+  `wss://sync.example.com/api/v1/rooms/{id}/ws`.
+* The key is in the **fragment** so it is never sent over HTTP or written to proxy logs. Never log the link or
+  the secret; treat the whole link as a secret and store it like a password.
+* Mint tokens exactly as above with `kid` / `server_id` / `secret` from the link. The link is the same for every
+  user of that FlickSync instance; to revoke it, rotate the key and re-share the new link.
+
+Example (key `main:default:0123456789abcdef0123456789abcdef0123456789abcdef`):
+
+```
+flicksync://sync.example.com/?v=1&tls=1#k=bWFpbjpkZWZhdWx0OjAxMjM0NTY3ODlhYmNkZWYwMTIzNDU2Nzg5YWJjZGVmMDEyMzQ1Njc4OWFiY2RlZg
+```
+
+Server side: the auto-generated key is `main:default:<48+ random base64url characters>` stored in
+`FLICKSYNC_DATA_DIR/auth_keys`; the address comes from `FLICKSYNC_PUBLIC_URL` (otherwise the bind address over
+plain http, with a warning). Reference implementation and round-trip tests: `src/invite.rs`.
+
 ### Key rotation
+
+With the auto-generated key: `flicksync invite --rotate` adds a key (new kid `k-xxxxxx`, same `server_id`), keeps
+the old one valid, prints the new invitation, and needs a service restart to take effect. Switch the issuer to the
+new kid, then (after the longest token lifetime) remove the old line from `auth_keys` and restart. With explicit
+`FLICKSYNC_AUTH_KEYS`, rotate manually:
 
 1. Generate a new secret (`openssl rand -base64 48`).
 2. Add it to FlickSync **next to** the old one with a new kid and the **same** server id:

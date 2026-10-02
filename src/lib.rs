@@ -12,6 +12,7 @@ pub mod auth;
 pub mod chat;
 pub mod config;
 pub mod errors;
+pub mod invite;
 pub mod metrics;
 pub mod protocol;
 pub mod ratelimit;

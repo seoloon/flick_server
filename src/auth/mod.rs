@@ -138,24 +138,29 @@ fn unauthenticated(msg: &str) -> Error {
     Error::new(ErrorCode::Unauthenticated, msg)
 }
 
+/// Split and validate a `kid:server_id:secret` entry (the secret may itself contain `:`).
+pub fn parse_key_entry(entry: &str) -> std::result::Result<(&str, &str, &str), AuthConfigError> {
+    let mut parts = entry.splitn(3, ':');
+    let (Some(kid), Some(server_id), Some(secret)) = (parts.next(), parts.next(), parts.next())
+    else {
+        return Err(AuthConfigError::BadEntry("<redacted>".into()));
+    };
+    if !valid_ident(kid) || !valid_ident(server_id) {
+        return Err(AuthConfigError::BadEntry(format!(
+            "{kid}:{server_id}:<redacted>"
+        )));
+    }
+    if secret.len() < MIN_SECRET_LEN {
+        return Err(AuthConfigError::WeakSecret(kid.to_owned()));
+    }
+    Ok((kid, server_id, secret))
+}
+
 impl Authenticator {
     pub fn new(cfg: &AuthConfig) -> std::result::Result<Self, AuthConfigError> {
         let mut keys = HashMap::new();
         for entry in &cfg.keys {
-            let mut parts = entry.splitn(3, ':');
-            let (Some(kid), Some(server_id), Some(secret)) =
-                (parts.next(), parts.next(), parts.next())
-            else {
-                return Err(AuthConfigError::BadEntry("<redacted>".into()));
-            };
-            if !valid_ident(kid) || !valid_ident(server_id) {
-                return Err(AuthConfigError::BadEntry(format!(
-                    "{kid}:{server_id}:<redacted>"
-                )));
-            }
-            if secret.len() < MIN_SECRET_LEN {
-                return Err(AuthConfigError::WeakSecret(kid.to_owned()));
-            }
+            let (kid, server_id, secret) = parse_key_entry(entry)?;
             let key = Key {
                 server_id: server_id.to_owned(),
                 decoding: DecodingKey::from_secret(secret.as_bytes()),

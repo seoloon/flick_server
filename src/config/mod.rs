@@ -9,6 +9,7 @@ use std::sync::Arc;
 
 use crate::auth::AuthConfig;
 use crate::chat::ChatConfig;
+use crate::invite::Endpoint;
 use crate::protocol::ControlMode;
 use crate::room::manager::ManagerConfig;
 use crate::room::{HostLeavePolicy, RoomConfig};
@@ -74,6 +75,12 @@ pub struct Config {
     pub http: HttpConfig,
     pub sweep_interval_ms: u64,
     pub shutdown_grace_secs: u64,
+    /// Where the auto-generated signing key lives (`FLICKSYNC_DATA_DIR`).
+    pub data_dir: String,
+    /// True when `FLICKSYNC_AUTH_KEYS` or `FLICKSYNC_AUTH_KEYS_FILE` is set: no key is generated then.
+    pub keys_configured: bool,
+    /// Public address used in invitations (`FLICKSYNC_PUBLIC_URL`).
+    pub public: Option<Endpoint>,
 }
 
 type Lookup<'a> = &'a dyn Fn(&str) -> Option<String>;
@@ -276,7 +283,9 @@ impl Config {
         };
 
         let mut keys = parse_key_list(&env("FLICKSYNC_AUTH_KEYS").unwrap_or_default());
-        if let Some(path) = env("FLICKSYNC_AUTH_KEYS_FILE").filter(|p| !p.trim().is_empty()) {
+        let keys_file = env("FLICKSYNC_AUTH_KEYS_FILE").filter(|p| !p.trim().is_empty());
+        let keys_configured = !keys.is_empty() || keys_file.is_some();
+        if let Some(path) = keys_file {
             let content =
                 std::fs::read_to_string(path.trim()).map_err(|source| ConfigError::File {
                     path: path.trim().to_owned(),
@@ -336,6 +345,17 @@ impl Config {
             }
         };
 
+        let public = match env("FLICKSYNC_PUBLIC_URL").filter(|v| !v.trim().is_empty()) {
+            None => None,
+            Some(v) => Some(
+                Endpoint::from_public_url(&v).map_err(|e| ConfigError::Invalid {
+                    name: "FLICKSYNC_PUBLIC_URL".into(),
+                    value: v.trim().to_owned(),
+                    reason: e.to_string(),
+                })?,
+            ),
+        };
+
         Ok(Config {
             host: parse(env, "FLICKSYNC_HOST", "0.0.0.0".to_owned())?,
             port: parse(env, "FLICKSYNC_PORT", 8787)?,
@@ -347,6 +367,9 @@ impl Config {
             http,
             sweep_interval_ms: parse(env, "FLICKSYNC_SWEEP_INTERVAL_MS", 1000)?,
             shutdown_grace_secs: parse(env, "FLICKSYNC_SHUTDOWN_GRACE", 10)?,
+            data_dir: parse(env, "FLICKSYNC_DATA_DIR", "./data".to_owned())?,
+            keys_configured,
+            public,
         })
     }
 }
@@ -419,6 +442,27 @@ mod tests {
         assert!(cfg(&[("FLICKSYNC_SYNC_DRIFT_SOFT", "50")]).is_err());
         assert!(cfg(&[("FLICKSYNC_SYNC_DRIFT_HARD", "400")]).is_err());
         assert!(cfg(&[("FLICKSYNC_WS_IDLE_TIMEOUT", "10")]).is_err());
+    }
+
+    #[test]
+    fn key_sources_and_public_url() {
+        let c = cfg(&[]).unwrap();
+        assert!(!c.keys_configured);
+        assert_eq!(c.data_dir, "./data");
+        assert!(c.public.is_none());
+        let c = cfg(&[("FLICKSYNC_AUTH_KEYS", "k:s:x")]).unwrap();
+        assert!(c.keys_configured);
+        let c = cfg(&[
+            ("FLICKSYNC_PUBLIC_URL", "https://sync.example.com/"),
+            ("FLICKSYNC_DATA_DIR", "/data"),
+        ])
+        .unwrap();
+        let p = c.public.unwrap();
+        assert!(p.tls);
+        assert_eq!(p.authority, "sync.example.com");
+        assert_eq!(c.data_dir, "/data");
+        let e = cfg(&[("FLICKSYNC_PUBLIC_URL", "ftp://x")]).unwrap_err();
+        assert!(e.to_string().contains("FLICKSYNC_PUBLIC_URL"));
     }
 
     #[test]

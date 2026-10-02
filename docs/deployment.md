@@ -9,10 +9,13 @@ reconnect, and get `ROOM_NOT_FOUND`).
 ```bash
 git clone <repo> flicksync && cd flicksync
 cp .env.example .env
-# edit .env: at least FLICKSYNC_AUTH_KEYS (see docs/flick-integration.md)
+# edit .env: set FLICKSYNC_PUBLIC_URL=https://sync.example.com (your public address)
 docker compose up -d --build
 curl http://localhost:8787/health        # {"status":"ok",...}
+docker compose exec flicksync flicksync invite   # prints the invitation link for Flick
 ```
+
+The invitation link is also printed in a banner in the startup logs (`docker compose logs flicksync`).
 
 The image is multi-stage (Rust build → `distroless/cc` runtime), runs as a non-root user, has no shell or package
 manager, and carries a `HEALTHCHECK` (`flicksync healthcheck`, a built-in probe, since the image has no curl).
@@ -22,12 +25,31 @@ front (below): Flick clients should use `https://` / `wss://`.
 Update: `git pull && docker compose up -d --build`.
 
 Configuration is entirely through `FLICKSYNC_*` environment variables, documented in `.env.example`.
-Required: `FLICKSYNC_AUTH_KEYS` (the service refuses to start without a signing key).
+Nothing is required. Without `FLICKSYNC_AUTH_KEYS` / `FLICKSYNC_AUTH_KEYS_FILE`, a signing key is generated on
+first start into `FLICKSYNC_DATA_DIR` (default `./data`, `/data` in the image; file `auth_keys`, mode 0600) and
+reused afterwards. **Keep that directory on a persistent volume** (the compose file does): if it is lost, a new key
+is generated and the old invitation stops working. The service refuses to start if the file exists but is empty or
+corrupt; it never regenerates a key silently. Set `FLICKSYNC_PUBLIC_URL` so invitations carry your real address.
+
+### Invitation and key management
+
+| Need | How |
+|---|---|
+| Show the invitation | startup banner in the logs, or `flicksync invite` (`docker compose exec flicksync flicksync invite`) |
+| QR code in the terminal | `flicksync invite --qr` |
+| Rotate | `flicksync invite --rotate` adds a key (new kid, same server id), keeps the old one valid and prints the new invitation; **restart** the service so it loads the new key |
+
+The secret is printed only by the banner and by `flicksync invite`; logs and errors show `<redacted>`.
+There is deliberately no HTTP endpoint returning the key. With `FLICKSYNC_AUTH_KEYS[_FILE]` set, nothing is
+generated, the banner is not printed (existing installs behave exactly as before), `flicksync invite` builds the
+link from the newest configured key, and `--rotate` is refused (rotate in your own configuration).
+
+`/ready` stays 503 until a key is loaded.
 
 ## Dokploy / Coolify
 
 1. Create an application from the Git repository using the **Dockerfile** build type (or the Compose file).
-2. Set the environment variables from `.env.example` (at least `FLICKSYNC_AUTH_KEYS`; keep it a *secret* variable).
+2. Set `FLICKSYNC_PUBLIC_URL` (your domain) and mount a persistent volume on `/data` (holds the generated signing key). Read the invitation from the logs or run `flicksync invite` in the container terminal. Alternatively set `FLICKSYNC_AUTH_KEYS` yourself as a *secret* variable.
 3. Container port: `8787` (or your `FLICKSYNC_PORT`). Attach your domain; the platform's Traefik/Caddy handles TLS.
 4. Health check path: `/health` (platforms that use the Docker `HEALTHCHECK` need nothing).
 5. Run **one** replica (rooms live in the memory of one instance, see [scaling.md](scaling.md)).
@@ -52,7 +74,8 @@ Wants=network-online.target
 [Service]
 User=flicksync
 DynamicUser=yes
-EnvironmentFile=/etc/flicksync.env      # chmod 600, contains FLICKSYNC_AUTH_KEYS
+EnvironmentFile=/etc/flicksync.env      # chmod 600; set FLICKSYNC_DATA_DIR=/var/lib/flicksync and FLICKSYNC_PUBLIC_URL
+StateDirectory=flicksync               # persistent /var/lib/flicksync for the generated key
 ExecStart=/usr/local/bin/flicksync
 Restart=on-failure
 RestartSec=2

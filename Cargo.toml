@@ -8,7 +8,9 @@ publish = false
 
 [dependencies]
 axum = { version = "0.8.9", features = ["ws", "macros"] }
+base64 = "0.22"
 jsonwebtoken = { version = "11.1.0", features = ["rust_crypto"] }
+qrcode = { version = "0.14", default-features = false }
 rand = "0.10.3"
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.151"

@@ -11,17 +11,21 @@ RUN mkdir src && echo "fn main() {}" > src/main.rs && echo "" > src/lib.rs \
     && rm -rf src target/release/deps/flicksync* target/release/flicksync* target/release/.fingerprint/flicksync*
 
 COPY src ./src
-RUN cargo build --release --locked --bin flicksync
+RUN cargo build --release --locked --bin flicksync \
+    && mkdir /data
 
 # ---- runtime -----------------------------------------------------------------
 # distroless/cc: glibc + libgcc only, no shell, no package manager, non-root variant.
 FROM gcr.io/distroless/cc-debian12:nonroot
 
 COPY --from=build /src/target/release/flicksync /usr/local/bin/flicksync
+# Owned by nonroot so a fresh named volume mounted here is writable (holds the signing key).
+COPY --from=build --chown=nonroot:nonroot /data /data
 
 ENV FLICKSYNC_HOST=0.0.0.0 \
     FLICKSYNC_PORT=8787 \
-    FLICKSYNC_LOG_FORMAT=json
+    FLICKSYNC_LOG_FORMAT=json \
+    FLICKSYNC_DATA_DIR=/data
 
 USER nonroot:nonroot
 EXPOSE 8787

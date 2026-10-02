@@ -15,15 +15,22 @@ Rust · Tokio · Axum · WebSockets · one process · everything in memory · no
 ## Quick start
 
 ```bash
-cp .env.example .env            # set FLICKSYNC_AUTH_KEYS
+cp .env.example .env            # set FLICKSYNC_PUBLIC_URL=https://your.domain
 docker compose up -d --build    # or: cargo run --release
 curl localhost:8787/health
+docker compose exec flicksync flicksync invite   # the one link to paste into Flick
 ```
+
+No key to write by hand: on first start FlickSync generates a signing key (kept in `FLICKSYNC_DATA_DIR`,
+a volume in `docker-compose.yml`) and prints a single **invitation link**
+(`flicksync://host/?v=1&tls=1#k=...`) in its startup logs and via `flicksync invite [--rotate] [--qr]`.
+The link contains the secret: share it only with your invitees. `FLICKSYNC_AUTH_KEYS` still works and takes
+priority. Format and details: [docs/flick-integration.md](docs/flick-integration.md#invitation-link).
 
 Try it without a Flick Server:
 
 ```bash
-# key in .env: FLICKSYNC_AUTH_KEYS=main:my-flick:<secret of 32+ chars>
+# the key is in $FLICKSYNC_DATA_DIR/auth_keys (kid:server_id:secret), or set FLICKSYNC_AUTH_KEYS=main:my-flick:<secret of 32+ chars>
 TOKEN=$(cargo run -q --example mint_token -- main <secret> my-flick alice Alice)
 curl -s -X POST localhost:8787/api/v1/rooms -H "Authorization: Bearer $TOKEN"
 # then connect a WebSocket client to the returned ws_path with the same Authorization header
