@@ -1,6 +1,8 @@
 //! Shared harness: a real FlickSync server on an ephemeral port plus a tiny WebSocket client.
 #![allow(dead_code)]
 
+pub mod fake_media;
+
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
