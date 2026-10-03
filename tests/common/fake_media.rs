@@ -254,7 +254,10 @@ fn serve_file(k: &Arc<FakeKnobs>, headers: &HeaderMap) -> Response {
             let guard = guard?;
             if left == 0 {
                 if cutting {
-                    // Abort the body: the client sees a truncated response.
+                    // Let hyper flush the headers and the bytes before the cut (it flushes
+                    // when the body is pending), then abort: the client sees a truncated
+                    // response rather than no response at all.
+                    tokio::time::sleep(Duration::from_millis(50)).await;
                     let err: io::Result<Bytes> = Err(io::Error::other("cut by the fake server"));
                     return Some((err, (pos, 0, false, None)));
                 }
