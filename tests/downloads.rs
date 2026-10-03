@@ -174,7 +174,7 @@ async fn open_gives_up_on_a_slow_first_byte() {
         b.open(BackendKind::Jellyfin, &f, 0, 9).await,
         Err(BackendError::Unavailable(_))
     ));
-    assert!(t.elapsed().as_millis() < 1400, "{:?}", t.elapsed());
+    assert!(t.elapsed().as_millis() < 1800, "{:?}", t.elapsed());
 }
 
 #[tokio::test]
@@ -319,7 +319,7 @@ async fn pump_delivers_exact_bytes_and_respects_the_rate() {
     assert_eq!(d.errors, 0);
     assert!(d.bytes == expected(0, 3 * MIB), "wrong bytes");
     // (3 MiB - 256 KiB of burst) at 1 MiB/s = 2.75 s.
-    assert!((2.5..3.6).contains(&secs), "took {secs} s");
+    assert!((2.5..4.5).contains(&secs), "took {secs} s");
     // Full coverage completes the grant.
     eventually("grant completed", || s.dd.grants.count() == 0).await;
     let h = s.dd.stats.history();

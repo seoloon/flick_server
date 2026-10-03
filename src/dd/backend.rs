@@ -461,4 +461,27 @@ mod tests {
         assert_eq!(parse_content_range("bytes 0-9/*"), (Some((0, 9)), None));
         assert_eq!(parse_content_range("junk"), (None, None));
     }
+
+    #[test]
+    fn hostile_plex_keys_cannot_change_the_request_host() {
+        // The key is appended to the configured base URL (never parsed as a reference), so
+        // `//evil.com`, `/\evil.com` and `/@evil.com` stay paths on the backend's authority.
+        let cfg = BackendConfig {
+            url: "http://plex.local:32400".into(),
+            secret: "t".into(),
+        };
+        let b = Backends::new(&DdConfig::from_lookup(&|_| None).unwrap());
+        for key in [
+            "//evil.com/x",
+            r"/\evil.com",
+            "/@evil.com",
+            "/@evil.com:1/x",
+        ] {
+            let req = b.get(BackendKind::Plex, &cfg, key).build().unwrap();
+            let url = req.url();
+            assert_eq!(url.host_str(), Some("plex.local"), "{key}");
+            assert_eq!(url.port(), Some(32400), "{key}");
+            assert_eq!(url.username(), "", "{key}");
+        }
+    }
 }

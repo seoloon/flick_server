@@ -2,10 +2,20 @@
 
 use crate::config::{ConfigError, Lookup, parse, parse_bool};
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct BackendConfig {
     pub url: String,
     pub secret: String,
+}
+
+/// Manual `Debug`: the secret must never reach logs (`DdConfig` derives `Debug`).
+impl std::fmt::Debug for BackendConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("BackendConfig")
+            .field("url", &self.url)
+            .field("secret", &"<redacted>")
+            .finish()
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -95,9 +105,11 @@ impl DdConfig {
             || c.max_range_bytes == 0
             || c.max_requests_per_min == 0
             || c.max_overserve == 0
+            || c.stall_timeout_ms == 0
+            || c.upstream_timeout_ms == 0
         {
             return Err(inconsistent(
-                "FLICKDD limits (parallel, global, rate, chunk, range, requests/min, overserve) must be >= 1",
+                "FLICKDD limits (parallel, global, rate, chunk, range, requests/min, overserve, stall and upstream timeouts) must be >= 1",
             ));
         }
         if c.chunk_bytes > c.max_range_bytes {
@@ -169,5 +181,32 @@ mod tests {
         assert!(cfg(&[("FLICKDD_CHUNK_MB", "0")]).is_err());
         assert!(cfg(&[("FLICKDD_CHUNK_MB", "128"), ("FLICKDD_MAX_RANGE_MB", "64")]).is_err());
         assert!(cfg(&[("FLICKDD_MAX_OVERSERVE", "0")]).is_err());
+    }
+
+    #[test]
+    fn timeouts_must_be_at_least_one_second() {
+        assert!(cfg(&[("FLICKDD_STALL_TIMEOUT", "0")]).is_err());
+        assert!(cfg(&[("FLICKDD_UPSTREAM_TIMEOUT", "0")]).is_err());
+        assert!(
+            cfg(&[
+                ("FLICKDD_STALL_TIMEOUT", "1"),
+                ("FLICKDD_UPSTREAM_TIMEOUT", "1")
+            ])
+            .is_ok()
+        );
+    }
+
+    #[test]
+    fn debug_never_prints_backend_secrets() {
+        let c = cfg(&[
+            ("FLICKDD_JELLYFIN_URL", "http://jf:8096"),
+            ("FLICKDD_JELLYFIN_API_KEY", "s3cr3t-jf-key"),
+            ("FLICKDD_PLEX_URL", "http://plex:32400"),
+            ("FLICKDD_PLEX_TOKEN", "s3cr3t-plex-token"),
+        ])
+        .unwrap();
+        let out = format!("{c:?}");
+        assert!(!out.contains("s3cr3t"), "{out}");
+        assert!(out.contains("http://jf:8096"), "{out}");
     }
 }
