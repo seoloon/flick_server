@@ -40,10 +40,20 @@ pub struct NewGrant {
     pub file: ResolvedFile,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct Created {
     pub id: String,
     pub token: String,
+}
+
+/// The token is a bearer secret: never printed.
+impl std::fmt::Debug for Created {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Created")
+            .field("id", &self.id)
+            .field("token", &"<redacted>")
+            .finish()
+    }
 }
 
 /// Signal sent to the stream (pump) currently serving a grant.
@@ -70,6 +80,7 @@ pub enum Progress {
     Continue,
     /// The grant is complete (or already gone): the stream has nothing more to account for.
     Complete,
+    /// The grant reached its over-serve cap: it has been finished (`Outcome::Expired`).
     OverServed,
 }
 
@@ -322,6 +333,8 @@ impl Grants {
         }
         if g.served >= g.overserve_cap(&self.cfg) {
             self.stats.record_rejected("quota");
+            // Spent: free the slot now rather than holding it until expiry.
+            self.finish(&mut inner, id, Outcome::Expired, now_ms);
             return Err(Error::new(
                 ErrorCode::QuotaExceeded,
                 "this download has served its allowance; create a new one",
@@ -379,6 +392,8 @@ impl Grants {
             return Progress::Complete;
         }
         if g.served >= g.overserve_cap(&self.cfg) {
+            // Spent: stop its stream and free the slot now rather than holding it until expiry.
+            self.finish(&mut inner, id, Outcome::Expired, now_ms);
             return Progress::OverServed;
         }
         Progress::Continue
@@ -638,8 +653,11 @@ mod tests {
     }
 
     #[test]
-    fn over_serving_is_capped() {
-        let (g, _s) = grants_with(|c| c.max_overserve = 2); // size 100 => 200 bytes max
+    fn over_serving_is_capped_and_finishes_the_grant() {
+        let (g, stats) = grants_with(|c| {
+            c.max_overserve = 2; // size 100 => 200 bytes max
+            c.max_parallel = 1;
+        });
         let a = g.create(new("alice", "a1"), 0).unwrap();
         let s = g.begin_segment(&a.id, 1).unwrap();
         g.record_progress(&a.id, s.epoch, 0, 50, 2);
@@ -649,10 +667,50 @@ mod tests {
             g.record_progress(&a.id, s.epoch, 0, 50, 2),
             Progress::OverServed
         ));
+        // The grant is over: it no longer holds the user's slot until expiry.
+        assert_eq!(g.count(), 0);
+        assert_eq!(stats.history()[0].outcome, Outcome::Expired);
+        assert_eq!(stats.history()[0].served, 200);
+        assert_eq!(*s.cancel.borrow(), Cancel::Preempted);
         assert_eq!(
             g.begin_segment(&a.id, 3).unwrap_err().error.code,
+            ErrorCode::DownloadNotFound
+        );
+        g.create(new("alice", "a2"), 4).unwrap(); // slot is free again
+    }
+
+    #[test]
+    fn a_quota_refusal_finishes_the_grant() {
+        let (g, stats) = grants_with(|c| {
+            c.max_overserve = 2;
+            c.max_parallel = 1;
+        });
+        let a = g.create(new("alice", "a1"), 0).unwrap();
+        // Defensive path: normally `record_progress` finishes the grant first (OverServed).
+        g.inner
+            .lock()
+            .unwrap()
+            .grants
+            .get_mut(&a.id)
+            .unwrap()
+            .served = 200;
+        assert_eq!(
+            g.begin_segment(&a.id, 1).unwrap_err().error.code,
             ErrorCode::QuotaExceeded
         );
+        assert_eq!(g.count(), 0);
+        assert_eq!(stats.history()[0].outcome, Outcome::Expired);
+        assert!(g.inner.lock().unwrap().per_user.is_empty());
+        g.create(new("alice", "a2"), 2).unwrap(); // slot is free again
+    }
+
+    #[test]
+    fn created_debug_redacts_the_token() {
+        let (g, _s) = grants(2, 3);
+        let c = g.create(new("alice", "a1"), 0).unwrap();
+        let dbg = format!("{c:?}");
+        assert!(dbg.contains(&c.id), "{dbg}");
+        assert!(!dbg.contains(&c.token), "{dbg}");
     }
 
     #[test]
