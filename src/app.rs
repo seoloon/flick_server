@@ -12,6 +12,7 @@ use tracing::{error, info};
 
 use crate::auth::{AuthConfigError, Authenticator};
 use crate::config::Config;
+use crate::dd::DdState;
 use crate::metrics::Metrics;
 use crate::room::RoomManager;
 use crate::sync::{Clock, SystemClock};
@@ -24,6 +25,8 @@ pub struct AppState {
     pub metrics: Arc<Metrics>,
     pub conn_limit: Arc<Semaphore>,
     pub started_at: Instant,
+    /// FlickDD state; `Some` only when `FLICKDD_ENABLED=true`.
+    pub dd: Option<Arc<DdState>>,
 }
 
 impl AppState {
@@ -39,6 +42,7 @@ impl AppState {
             clock,
             metrics.clone(),
         ));
+        let dd = cfg.dd.enabled.then(|| DdState::new(cfg.dd.clone()));
         let conn_limit = Arc::new(Semaphore::new(cfg.ws.max_connections));
         Ok(Self {
             cfg: Arc::new(cfg),
@@ -47,6 +51,7 @@ impl AppState {
             metrics,
             conn_limit,
             started_at: Instant::now(),
+            dd,
         })
     }
 }
@@ -58,6 +63,7 @@ pub fn build_router(state: AppState) -> Router {
 /// Periodic room maintenance (reconnection grace, expiry, sync heartbeat).
 pub fn spawn_sweeper(state: &AppState) -> JoinHandle<()> {
     let manager = state.manager.clone();
+    let dd = state.dd.clone();
     let period = Duration::from_millis(state.cfg.sweep_interval_ms.max(10));
     tokio::spawn(async move {
         let mut tick = tokio::time::interval(period);
@@ -65,6 +71,9 @@ pub fn spawn_sweeper(state: &AppState) -> JoinHandle<()> {
         loop {
             tick.tick().await;
             manager.sweep();
+            if let Some(dd) = &dd {
+                dd.sweep();
+            }
         }
     })
 }

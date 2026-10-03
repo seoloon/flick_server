@@ -40,9 +40,9 @@ pub async fn metrics(State(state): State<AppState>, headers: HeaderMap) -> Respo
             return StatusCode::UNAUTHORIZED.into_response();
         }
     }
-    (
-        [(header::CONTENT_TYPE, "text/plain; version=0.0.4")],
-        state.metrics.render_prometheus(),
-    )
-        .into_response()
+    let mut body = state.metrics.render_prometheus();
+    if let Some(dd) = &state.dd {
+        body.push_str(&dd.stats.render_prometheus(dd.grants.count() as u64));
+    }
+    ([(header::CONTENT_TYPE, "text/plain; version=0.0.4")], body).into_response()
 }

@@ -467,3 +467,82 @@ async fn pump_source_changed_mid_stream_invalidates_the_grant() {
     assert_eq!(h[0].outcome, Outcome::SourceChanged);
     assert_eq!(h[0].covered, d.bytes.len() as u64);
 }
+
+// ---------------------------------------------------------------------------------------
+// App wiring: state, metrics, sweeper
+// ---------------------------------------------------------------------------------------
+
+async fn enabled_server(fake: &FakeMedia, extra: &[(&str, &str)]) -> common::TestServer {
+    let mut vars: Vec<(&str, &str)> = vec![
+        ("FLICKDD_ENABLED", "true"),
+        ("FLICKDD_JELLYFIN_URL", &fake.url),
+        ("FLICKDD_JELLYFIN_API_KEY", common::fake_media::JF_KEY),
+    ];
+    vars.extend_from_slice(extra);
+    common::TestServer::start(&vars).await
+}
+
+async fn metrics_text(s: &common::TestServer) -> String {
+    reqwest::get(format!("http://{}/metrics", s.addr))
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap()
+}
+
+#[tokio::test]
+async fn dd_state_exists_only_when_enabled() {
+    let off = common::TestServer::start(&[]).await;
+    assert!(off.state.dd.is_none());
+    let fake = FakeMedia::start(KIB).await;
+    let on = enabled_server(&fake, &[]).await;
+    assert!(on.state.dd.is_some());
+}
+
+#[tokio::test]
+async fn metrics_include_flickdd_only_when_enabled() {
+    let off = common::TestServer::start(&[]).await;
+    let text = metrics_text(&off).await;
+    assert!(!text.is_empty() && !text.contains("flickdd_"), "{text}");
+    let fake = FakeMedia::start(KIB).await;
+    let on = enabled_server(&fake, &[]).await;
+    let text = metrics_text(&on).await;
+    assert!(text.contains("flickdd_active_downloads 0"), "{text}");
+}
+
+#[tokio::test]
+async fn the_sweeper_expires_idle_grants() {
+    let fake = FakeMedia::start(10 * KIB).await;
+    let s = enabled_server(&fake, &[("FLICKDD_GRANT_TTL", "1")]).await;
+    let dd = s.state.dd.clone().unwrap();
+    let file = dd
+        .backends
+        .resolve(BackendKind::Jellyfin, ITEM)
+        .await
+        .unwrap();
+    dd.grants
+        .create(
+            NewGrant {
+                user_id: "alice".into(),
+                user_name: "Alice".into(),
+                backend: BackendKind::Jellyfin,
+                item_id: ITEM.into(),
+                title: None,
+                kind: None,
+                file,
+            },
+            now_ms(),
+        )
+        .unwrap();
+    assert_eq!(dd.grants.count(), 1);
+    let metrics = metrics_text(&s).await;
+    assert!(metrics.contains("flickdd_active_downloads 1"), "{metrics}");
+    for _ in 0..60 {
+        if dd.grants.count() == 0 {
+            return;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    panic!("the grant was never swept");
+}

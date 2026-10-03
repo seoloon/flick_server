@@ -40,6 +40,11 @@ impl DdState {
         })
     }
 
+    /// Drop expired grants (called from the app sweeper).
+    pub fn sweep(&self) {
+        self.grants.sweep(now_ms());
+    }
+
     /// Monotonic microseconds since this state was created (throttle clock).
     pub fn now_us(&self) -> Micros {
         self.epoch.elapsed().as_micros() as Micros
