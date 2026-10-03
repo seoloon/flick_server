@@ -11,6 +11,7 @@ pub mod app;
 pub mod auth;
 pub mod chat;
 pub mod config;
+pub mod dd;
 pub mod errors;
 pub mod invite;
 pub mod metrics;

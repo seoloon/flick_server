@@ -31,6 +31,12 @@ pub enum ErrorCode {
     RateLimited,
     ChatDisabled,
     SessionReplaced,
+    DownloadNotFound,
+    TooManyDownloads,
+    SourceChanged,
+    QuotaExceeded,
+    RangeNotSatisfiable,
+    BackendUnavailable,
     Internal,
 }
 
@@ -41,11 +47,13 @@ impl ErrorCode {
         match self {
             Unauthenticated => 401,
             Forbidden | NotHost | NotMember | ControlDenied | ChatDisabled => 403,
-            RoomNotFound => 404,
-            RoomFull | SessionReplaced => 409,
+            RoomNotFound | DownloadNotFound => 404,
+            RoomFull | SessionReplaced | SourceChanged => 409,
             RoomClosed => 410,
             MessageTooLarge => 413,
-            RateLimited | TooManyRooms => 429,
+            RateLimited | TooManyRooms | TooManyDownloads | QuotaExceeded => 429,
+            RangeNotSatisfiable => 416,
+            BackendUnavailable => 502,
             TooManyConnections => 503,
             Internal => 500,
             InvalidMessage | UnknownType | UnsupportedVersion | InvalidPayload

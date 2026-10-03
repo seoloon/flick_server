@@ -83,11 +83,13 @@ pub struct Config {
     pub keys_configured: bool,
     /// Public address used in invitations (`FLICKSYNC_PUBLIC_URL`).
     pub public: Option<Endpoint>,
+    /// FlickDD streaming-download module (`FLICKDD_*`).
+    pub dd: crate::dd::config::DdConfig,
 }
 
-type Lookup<'a> = &'a dyn Fn(&str) -> Option<String>;
+pub(crate) type Lookup<'a> = &'a dyn Fn(&str) -> Option<String>;
 
-fn parse<T>(env: Lookup, name: &str, default: T) -> Result<T, ConfigError>
+pub(crate) fn parse<T>(env: Lookup, name: &str, default: T) -> Result<T, ConfigError>
 where
     T: FromStr,
     T::Err: std::fmt::Display,
@@ -105,7 +107,7 @@ where
     }
 }
 
-fn parse_bool(env: Lookup, name: &str, default: bool) -> Result<bool, ConfigError> {
+pub(crate) fn parse_bool(env: Lookup, name: &str, default: bool) -> Result<bool, ConfigError> {
     match env(name)
         .map(|v| v.trim().to_ascii_lowercase())
         .filter(|v| !v.is_empty())
@@ -380,6 +382,7 @@ impl Config {
             data_dir: parse(env, "FLICKSYNC_DATA_DIR", "./data".to_owned())?,
             keys_configured,
             public,
+            dd: crate::dd::config::DdConfig::from_lookup(env)?,
         })
     }
 }
