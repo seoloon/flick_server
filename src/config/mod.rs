@@ -62,6 +62,7 @@ pub struct HttpConfig {
     pub metrics_token: Option<String>,
     /// Bearer token of the admin API (`/admin/v1/*`); `None` = admin API disabled (404).
     pub admin_token: Option<String>,
+    pub panel_password: Option<String>,
     pub max_body_bytes: usize,
 }
 
@@ -331,6 +332,9 @@ impl Config {
             admin_token: env("FLICKSYNC_ADMIN_TOKEN")
                 .map(|t| t.trim().to_owned())
                 .filter(|t| !t.is_empty()),
+            panel_password: env("PANEL_PASSWORD")
+                .map(|v| v.trim().to_owned())
+                .filter(|v| !v.is_empty()),
             max_body_bytes: parse(env, "FLICKSYNC_MAX_BODY_BYTES", 16 * 1024)?,
         };
         if http.admin_token.as_ref().is_some_and(|t| t.len() < 16) {

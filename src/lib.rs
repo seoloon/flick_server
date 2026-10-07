@@ -6,6 +6,7 @@
 //! * [`auth`], [`config`], [`metrics`]: cross-cutting services.
 //! * [`api`], [`websocket`], [`app`]: the Axum/WebSocket adapter.
 
+pub mod admin_token;
 pub mod api;
 pub mod app;
 pub mod auth;

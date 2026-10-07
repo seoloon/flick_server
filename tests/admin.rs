@@ -571,3 +571,45 @@ mod dd_admin {
         assert!(!e.to_string().contains(&c.token));
     }
 }
+
+#[tokio::test]
+async fn the_admin_api_accepts_the_token_derived_from_the_panel_password() {
+    let password = "correct horse battery staple";
+    let derived = "602faf385fbedfdd2399872d5e5ec4359027f10a59806d0d6c4b598faf591011";
+    let s = TestServer::start(&[("PANEL_PASSWORD", password)]).await;
+    let (st, _) = s
+        .http(Method::GET, "/admin/v1/overview", Some(derived), None)
+        .await;
+    assert_eq!(st, StatusCode::OK);
+    let (st, _) = s
+        .http(
+            Method::GET,
+            "/admin/v1/overview",
+            Some("wrong-token-0123456789"),
+            None,
+        )
+        .await;
+    assert_eq!(st, StatusCode::UNAUTHORIZED);
+    // The password itself is not the token.
+    let (st, _) = s
+        .http(Method::GET, "/admin/v1/overview", Some(password), None)
+        .await;
+    assert_eq!(st, StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
+async fn without_a_long_enough_password_or_legacy_token_the_admin_api_is_off() {
+    let cases: [&[(&str, &str)]; 2] = [&[], &[("PANEL_PASSWORD", "short")]];
+    for vars in cases {
+        let s = TestServer::start(vars).await;
+        let (st, _) = s
+            .http(
+                Method::GET,
+                "/admin/v1/overview",
+                Some("x".repeat(40).as_str()),
+                None,
+            )
+            .await;
+        assert_eq!(st, StatusCode::NOT_FOUND);
+    }
+}

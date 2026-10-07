@@ -1,6 +1,7 @@
 //! Operator API for the web panel: `/admin/v1/*`.
 //!
-//! Disabled (404) unless `FLICKSYNC_ADMIN_TOKEN` is set; then every call needs
+//! Disabled (404) unless `PANEL_PASSWORD` (10+ characters) or the deprecated
+//! `FLICKSYNC_ADMIN_TOKEN` is set; then every call needs
 //! `Authorization: Bearer <token>`, compared in constant time. It exposes the invitation
 //! (which contains the signing key), so responses are never cacheable and the token must stay
 //! server-side: the panel's server calls this API, browsers never see the token.
@@ -17,7 +18,7 @@ use serde::Serialize;
 use serde_json::json;
 use tracing::warn;
 
-use super::auth::{bearer_token, constant_time_eq};
+use super::auth::bearer_token;
 use super::error::ApiError;
 use crate::app::AppState;
 use crate::auth::parse_key_entry;
@@ -37,11 +38,10 @@ impl FromRequestParts<AppState> for AdminAuth {
         parts: &mut Parts,
         state: &AppState,
     ) -> Result<Self, Self::Rejection> {
-        let Some(expected) = &state.boot.http.admin_token else {
+        if !state.admin.is_enabled() {
             return Err(StatusCode::NOT_FOUND.into_response());
-        };
-        let ok = bearer_token(&parts.headers)
-            .is_some_and(|t| constant_time_eq(t.as_bytes(), expected.as_bytes()));
+        }
+        let ok = bearer_token(&parts.headers).is_some_and(|t| state.admin.accepts(t));
         if ok {
             Ok(AdminAuth)
         } else {

@@ -10,6 +10,8 @@ use tokio::sync::Semaphore;
 use tokio::task::JoinHandle;
 use tracing::{error, info, warn};
 
+use crate::admin_token::AdminTokens;
+
 use crate::auth::{AuthConfigError, Authenticator};
 use crate::config::{Config, ConfigError, WsConfig};
 use crate::dd::DdState;
@@ -58,6 +60,7 @@ fn build_server(settings: &Settings) -> Result<ServerRuntime, StartError> {
 pub struct AppState {
     /// Read once at boot: bind address, intervals, body limit. Never swapped.
     pub boot: Arc<Config>,
+    pub admin: Arc<AdminTokens>,
     pub settings: Arc<Settings>,
     server: Arc<RwLock<Arc<ServerRuntime>>>,
     sync_slot: Arc<Slot<SyncRuntime>>,
@@ -77,6 +80,7 @@ impl AppState {
         let boot = settings.config()?;
         let server = build_server(&settings)?;
         let state = Self {
+            admin: Arc::new(AdminTokens::from_config(&boot)),
             boot: Arc::new(boot),
             settings,
             server: Arc::new(RwLock::new(Arc::new(server))),
@@ -340,6 +344,14 @@ pub async fn serve(state: AppState) -> Result<(), Box<dyn std::error::Error>> {
         auth_keys = state.server().cfg.auth.keys.len(),
         "flicksync listening"
     );
+    if state.admin.has_legacy() {
+        warn!(
+            "FLICKSYNC_ADMIN_TOKEN is deprecated: set PANEL_PASSWORD instead, the admin token is derived from it"
+        );
+    }
+    if !state.admin.is_enabled() {
+        info!("admin API is off: set PANEL_PASSWORD (10+ characters) to turn it on");
+    }
 
     let stopping = state.clone();
     let server = axum::serve(listener, app).with_graceful_shutdown(async move {
