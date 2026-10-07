@@ -110,16 +110,18 @@ No new dependency: `std::sync::RwLock` is enough (writes are rare, reads are a c
 {
   "version": 1,
   "revision": 17,
-  "server":    { "public_url": "https://flick.example.com/services", "log_level": "info" },
-  "flicksync": { "enabled": true, "max_room_size": 100 },
-  "flickdd":   { "enabled": false, "jellyfin": { "url": "...", "api_key": "..." } }
+  "server":    { "FLICKSYNC_PUBLIC_URL": "https://flick.example.com/services", "FLICKSYNC_LOG_LEVEL": "info" },
+  "flicksync": { "FLICKSYNC_ENABLED": "true", "FLICKSYNC_MAX_ROOM_SIZE": "100" },
+  "flickdd":   { "FLICKDD_ENABLED": "false", "FLICKDD_JELLYFIN_URL": "http://jellyfin:8096" }
 }
 ```
 
-`revision` increases on every write; a running module remembers the revision it was started
-with, so the API can say "this module runs older settings than stored" (`pending_reload`).
-`version` is the schema version for future migrations. Unknown keys are kept on rewrite and
-ignored on read.
+Every key is the name of the environment variable it replaces and every value is a string, so
+the stored settings plug into the existing parsing without a second schema. `revision`
+increases on every write (informational). `version` is the schema version for future
+migrations. Unknown keys are kept on rewrite and ignored on read. `pending_reload` is computed
+by comparing a fingerprint of the scope's current values (stored, environment, default) with
+the one taken when the module was started.
 
 ### 4.2 Precedence and validation
 
@@ -177,7 +179,8 @@ Unknown module id: `404`. Settings for a field that does not exist: `400`.
 **Admin token.** `token = hex(HMAC-SHA256(key = PANEL_PASSWORD, msg = "flick-admin-api-v1"))`,
 computed by the server at boot and by the panel (Node `crypto`). The admin API answers `404`
 unless `PANEL_PASSWORD` is at least 10 characters (same rule as the panel). Comparison is
-constant-time. The `hmac` crate is added next to `sha2`.
+constant-time. HMAC-SHA256 is built by hand (RFC 2104) on the existing `sha2` dependency, so
+no crate is added; it is checked against the RFC 4231 vectors.
 
 ## 6. Error handling
 
