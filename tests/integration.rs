@@ -566,6 +566,51 @@ async fn cors_is_not_wildcard() {
         .await
         .unwrap();
     assert!(bad.headers().get("access-control-allow-origin").is_none());
+
+    // FlickDD: DELETE, Range and If-Range are allowed; the download headers are exposed.
+    let dd_preflight = Request::builder()
+        .method("OPTIONS")
+        .uri("/api/v1/downloads/x")
+        .header("origin", "https://app.example")
+        .header("access-control-request-method", "DELETE")
+        .header("access-control-request-headers", "range,if-range")
+        .body(Body::empty())
+        .unwrap();
+    let ok = flicksync::app::build_router(s.state.clone())
+        .oneshot(dd_preflight)
+        .await
+        .unwrap();
+    let h = |name: &str| {
+        ok.headers()
+            .get(name)
+            .map(|v| v.to_str().unwrap().to_ascii_lowercase())
+            .unwrap_or_default()
+    };
+    assert!(h("access-control-allow-methods").contains("delete"));
+    assert!(h("access-control-allow-headers").contains("if-range"));
+    let simple = Request::builder()
+        .uri("/health")
+        .header("origin", "https://app.example")
+        .body(Body::empty())
+        .unwrap();
+    let resp = flicksync::app::build_router(s.state.clone())
+        .oneshot(simple)
+        .await
+        .unwrap();
+    let exposed = resp
+        .headers()
+        .get("access-control-expose-headers")
+        .map(|v| v.to_str().unwrap().to_ascii_lowercase())
+        .unwrap_or_default();
+    for name in [
+        "content-range",
+        "etag",
+        "accept-ranges",
+        "content-length",
+        "retry-after",
+    ] {
+        assert!(exposed.contains(name), "{name} not in {exposed:?}");
+    }
 }
 
 #[tokio::test]

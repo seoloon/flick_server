@@ -1,9 +1,9 @@
 //! Types shared by the grant registry, the analytics and the media backends.
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 /// Media server a file is downloaded from.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum BackendKind {
     Jellyfin,

@@ -233,7 +233,11 @@ impl Grants {
     }
 
     /// Open a grant, taking one slot of the user and one of the server.
+    /// An empty file is refused: a zero-byte grant has no valid range to serve.
     pub fn create(&self, new: NewGrant, now_ms: u64) -> Result<Created, Error> {
+        if new.file.size == 0 {
+            return Err(Error::new(ErrorCode::InvalidPayload, "empty file"));
+        }
         let mut inner = self.lock();
         if inner.grants.len() >= self.cfg.max_global {
             self.stats.record_rejected("global");
@@ -575,6 +579,16 @@ mod tests {
             g.create(new("carol", "c1"), 0).unwrap_err().code,
             ErrorCode::TooManyDownloads
         ); // global 3
+    }
+
+    #[test]
+    fn an_empty_file_is_refused_without_taking_a_slot() {
+        let (g, _s) = grants(1, 1);
+        let mut n = new("alice", "a1");
+        n.file.size = 0;
+        assert_eq!(g.create(n, 0).unwrap_err().code, ErrorCode::InvalidPayload);
+        assert_eq!(g.count(), 0);
+        g.create(new("alice", "a2"), 0).unwrap();
     }
 
     #[test]

@@ -2,6 +2,7 @@
 
 pub mod admin;
 pub mod auth;
+pub mod downloads;
 pub mod error;
 pub mod health;
 pub mod rooms;
@@ -35,6 +36,12 @@ pub fn router(state: AppState) -> Router {
         .route("/api/v1/rooms/{room_id}/join", post(rooms::join_room))
         .route("/api/v1/rooms/{room_id}/leave", post(rooms::leave_room))
         .route("/api/v1/rooms/{room_id}/ws", get(websocket::upgrade))
+        .route("/api/v1/downloads", post(downloads::create))
+        .route(
+            "/api/v1/downloads/{id}",
+            get(downloads::status).delete(downloads::cancel),
+        )
+        .route("/api/v1/downloads/{id}/file", get(downloads::file))
         .layer(DefaultBodyLimit::max(body_limit))
         .with_state(state);
     match cors {
@@ -53,8 +60,20 @@ fn cors_layer(origins: &[String]) -> Option<CorsLayer> {
     Some(
         CorsLayer::new()
             .allow_origin(AllowOrigin::list(values))
-            .allow_methods([Method::GET, Method::POST])
-            .allow_headers([header::AUTHORIZATION, header::CONTENT_TYPE])
+            .allow_methods([Method::GET, Method::POST, Method::DELETE])
+            .allow_headers([
+                header::AUTHORIZATION,
+                header::CONTENT_TYPE,
+                header::RANGE,
+                header::IF_RANGE,
+            ])
+            .expose_headers([
+                header::CONTENT_RANGE,
+                header::ETAG,
+                header::ACCEPT_RANGES,
+                header::CONTENT_LENGTH,
+                header::RETRY_AFTER,
+            ])
             .max_age(Duration::from_secs(600)),
     )
 }

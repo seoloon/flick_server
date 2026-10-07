@@ -148,6 +148,17 @@ impl TestServer {
     }
 }
 
+/// A fake Jellyfin/Plex serving a `size`-byte file and a server with FlickDD enabled, both
+/// backends pointing at the fake, plus `extra` variables.
+pub async fn start_dd(size: u64, extra: &[(&str, &str)]) -> (fake_media::FakeMedia, TestServer) {
+    let fake = fake_media::FakeMedia::start(size).await;
+    let env = fake.env();
+    let mut vars: Vec<(&str, &str)> = env.iter().map(|(k, v)| (k.as_str(), v.as_str())).collect();
+    vars.extend_from_slice(extra);
+    let server = TestServer::start(&vars).await;
+    (fake, server)
+}
+
 pub struct Ws {
     stream: WebSocketStream<MaybeTlsStream<TcpStream>>,
 }

@@ -1,4 +1,4 @@
-//! FlickDD: media backends, the streaming pump and (Task 7) the download routes.
+//! FlickDD: media backends, the streaming pump and the client download routes.
 
 mod common;
 
@@ -17,6 +17,7 @@ use flicksync::dd::grants::{ActiveView, NewGrant, Progress};
 use flicksync::dd::pump::{self, PumpParams};
 use flicksync::dd::stats::Outcome;
 use flicksync::dd::{DdState, now_ms};
+use serde_json::{Value, json};
 use tokio::sync::mpsc::Receiver;
 
 const KIB: u64 = 1024;
@@ -545,4 +546,625 @@ async fn the_sweeper_expires_idle_grants() {
         tokio::time::sleep(Duration::from_millis(50)).await;
     }
     panic!("the grant was never swept");
+}
+
+// ---------------------------------------------------------------------------------------
+// Client API (real sockets)
+// ---------------------------------------------------------------------------------------
+
+/// A fake backend, a server with FlickDD enabled on it and an HTTP client.
+struct Api {
+    fake: FakeMedia,
+    server: common::TestServer,
+    http: reqwest::Client,
+}
+
+/// A created grant.
+struct Created {
+    id: String,
+    token: String,
+    json: Value,
+}
+
+/// Status and JSON body (Null when not JSON) of a response.
+async fn json_of(resp: reqwest::Response) -> (u16, Value) {
+    let status = resp.status().as_u16();
+    let body = resp.bytes().await.unwrap();
+    (status, serde_json::from_slice(&body).unwrap_or(Value::Null))
+}
+
+fn header(resp: &reqwest::Response, name: &str) -> Option<String> {
+    resp.headers()
+        .get(name)
+        .map(|v| v.to_str().unwrap().to_owned())
+}
+
+fn download_jwt(user: &str) -> String {
+    common::token_for(
+        user,
+        common::SERVER,
+        "k1",
+        common::SECRET,
+        &["downloads:create"],
+    )
+}
+
+/// Read the body until it ends or fails: the bytes received, and whether it failed.
+async fn read_until_end(mut resp: reqwest::Response) -> (Vec<u8>, bool) {
+    let mut got = Vec::new();
+    loop {
+        match tokio::time::timeout(Duration::from_secs(10), resp.chunk()).await {
+            Err(_) => panic!("the body neither progressed nor ended"),
+            Ok(Ok(Some(c))) => got.extend_from_slice(&c),
+            Ok(Ok(None)) => return (got, false),
+            Ok(Err(_)) => return (got, true),
+        }
+    }
+}
+
+impl Api {
+    async fn start(size: u64, extra: &[(&str, &str)]) -> Api {
+        let (fake, server) = common::start_dd(size, extra).await;
+        Api {
+            fake,
+            server,
+            http: reqwest::Client::new(),
+        }
+    }
+
+    fn dd(&self) -> Arc<DdState> {
+        self.server.state.dd.clone().unwrap()
+    }
+
+    fn url(&self, path: &str) -> String {
+        format!("http://{}{path}", self.server.addr)
+    }
+
+    async fn post_create(&self, jwt: &str, body: Value) -> (u16, Value) {
+        let resp = self
+            .http
+            .post(self.url("/api/v1/downloads"))
+            .bearer_auth(jwt)
+            .header("content-type", "application/json")
+            .body(body.to_string())
+            .send()
+            .await
+            .unwrap();
+        json_of(resp).await
+    }
+
+    /// Create a Jellyfin grant on the fake item as `user`; asserts 201.
+    async fn create(&self, user: &str) -> Created {
+        let body = json!({
+            "backend": "jellyfin", "item_id": ITEM, "title": "  Movie One  ", "kind": "movie"
+        });
+        let (status, json) = self.post_create(&download_jwt(user), body).await;
+        assert_eq!(status, 201, "{json}");
+        Created {
+            id: json["download_id"].as_str().unwrap().to_owned(),
+            token: json["token"].as_str().unwrap().to_owned(),
+            json,
+        }
+    }
+
+    fn file(&self, g: &Created) -> reqwest::RequestBuilder {
+        self.http
+            .get(self.url(&format!("/api/v1/downloads/{}/file", g.id)))
+            .bearer_auth(&g.token)
+    }
+
+    async fn status(&self, g: &Created) -> (u16, Value) {
+        let resp = self
+            .http
+            .get(self.url(&format!("/api/v1/downloads/{}", g.id)))
+            .bearer_auth(&g.token)
+            .send()
+            .await
+            .unwrap();
+        json_of(resp).await
+    }
+}
+
+#[tokio::test]
+async fn full_flow_create_download_verify_bytes() {
+    let api = Api::start(MIB, &[]).await;
+    let before = now_ms();
+    let g = api.create("alice").await;
+    let j = &g.json;
+    assert_eq!(j["url"], format!("/api/v1/downloads/{}/file", g.id));
+    assert_eq!(j["size"], MIB);
+    assert_eq!(j["filename"], "Movie One (2020).mkv");
+    assert_eq!(j["mime"], "video/x-matroska");
+    let etag = j["etag"].as_str().unwrap().to_owned();
+    assert!(etag.starts_with('"') && etag.ends_with('"'), "{etag}");
+    assert_eq!(j["chunk_bytes"], 8 * MIB);
+    assert_eq!(j["max_range_bytes"], 64 * MIB);
+    assert_eq!(j["rate_limit_bps"], 10 * MIB);
+    assert!(j["expires_at"].as_u64().unwrap() > before, "{j}");
+    assert!(g.token.len() >= 40, "256-bit token");
+
+    let (status, view) = api.status(&g).await;
+    assert_eq!(status, 200, "{view}");
+    assert_eq!(view["download_id"], g.id.as_str());
+    assert_eq!(view["size"], MIB);
+    assert_eq!(view["covered"], 0);
+    assert_eq!(view["etag"], etag.as_str());
+    assert!(view["expires_at"].as_u64().unwrap() > before);
+
+    let resp = api.file(&g).send().await.unwrap();
+    assert_eq!(resp.status().as_u16(), 200);
+    assert_eq!(header(&resp, "content-length"), Some(MIB.to_string()));
+    assert_eq!(header(&resp, "accept-ranges").as_deref(), Some("bytes"));
+    assert_eq!(header(&resp, "etag"), Some(etag));
+    assert_eq!(
+        header(&resp, "content-type").as_deref(),
+        Some("video/x-matroska")
+    );
+    assert_eq!(header(&resp, "cache-control").as_deref(), Some("no-store"));
+    assert!(header(&resp, "content-range").is_none());
+    let cd = header(&resp, "content-disposition").unwrap();
+    assert!(
+        cd.starts_with("attachment; filename=\"Movie One (2020).mkv\"")
+            && cd.contains("filename*=UTF-8''Movie%20One%20%282020%29.mkv"),
+        "{cd}"
+    );
+    let body = read_all(resp).await;
+    assert!(
+        body == expected(0, MIB),
+        "wrong bytes ({} received)",
+        body.len()
+    );
+
+    let dd = api.dd();
+    eventually("grant completed", || dd.grants.count() == 0).await;
+    assert_eq!(api.status(&g).await.0, 404);
+    let h = dd.stats.history();
+    assert_eq!((h[0].outcome, h[0].covered), (Outcome::Completed, MIB));
+    assert_eq!(h[0].title.as_deref(), Some("Movie One"));
+    assert_eq!(h[0].kind.as_deref(), Some("movie"));
+}
+
+#[tokio::test]
+async fn missing_permission_is_forbidden_and_disabled_is_404() {
+    let api = Api::start(KIB, &[]).await;
+    let rooms_only = common::token_for(
+        "alice",
+        common::SERVER,
+        "k1",
+        common::SECRET,
+        &["rooms:create"],
+    );
+    let body = json!({ "backend": "jellyfin", "item_id": ITEM });
+    let (status, json) = api.post_create(&rooms_only, body.clone()).await;
+    assert_eq!((status, &json["error"]["code"]), (403, &json!("FORBIDDEN")));
+    let resp = api
+        .http
+        .post(api.url("/api/v1/downloads"))
+        .body(body.to_string())
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status().as_u16(), 401);
+
+    let off = common::TestServer::start(&[]).await;
+    let http = reqwest::Client::new();
+    let url = |p: &str| format!("http://{}{p}", off.addr);
+    let jwt = common::token("alice");
+    let requests = [
+        http.post(url("/api/v1/downloads"))
+            .bearer_auth(&jwt)
+            .body(body.to_string()),
+        http.get(url("/api/v1/downloads/abc")).bearer_auth("t"),
+        http.get(url("/api/v1/downloads/abc/file")).bearer_auth("t"),
+        http.delete(url("/api/v1/downloads/abc")).bearer_auth("t"),
+    ];
+    for rb in requests {
+        let (status, json) = json_of(rb.send().await.unwrap()).await;
+        assert_eq!(status, 404, "{json}");
+        assert_eq!(json["error"]["code"], "DOWNLOAD_NOT_FOUND");
+    }
+}
+
+#[tokio::test]
+async fn ranged_resume_assembles_the_file() {
+    let size = 5 * MIB;
+    let api = Api::start(
+        size,
+        &[("FLICKDD_MAX_RANGE_MB", "1"), ("FLICKDD_CHUNK_MB", "1")],
+    )
+    .await;
+    let g = api.create("alice").await;
+    assert_eq!(g.json["max_range_bytes"], MIB);
+    let mut file: Vec<u8> = Vec::new();
+    let mut fragments = 0;
+    let mut cut_once = false;
+    while (file.len() as u64) < size {
+        let off = file.len() as u64;
+        let mut resp = api
+            .file(&g)
+            .header("range", format!("bytes={off}-"))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(resp.status().as_u16(), 206, "fragment at {off}");
+        let end = (off + MIB - 1).min(size - 1);
+        assert_eq!(
+            header(&resp, "content-range"),
+            Some(format!("bytes {off}-{end}/{size}"))
+        );
+        assert_eq!(
+            header(&resp, "content-length"),
+            Some((end - off + 1).to_string())
+        );
+        fragments += 1;
+        if fragments == 2 && !cut_once {
+            // Drop the connection mid-fragment, keep what actually arrived.
+            cut_once = true;
+            let mut got = 0;
+            while got < 300 * KIB {
+                let c = resp.chunk().await.unwrap().unwrap();
+                got += c.len() as u64;
+                file.extend_from_slice(&c);
+            }
+            drop(resp);
+            continue;
+        }
+        let body = read_all(resp).await;
+        assert!(body.len() as u64 <= MIB);
+        file.extend_from_slice(&body);
+    }
+    assert!(cut_once);
+    assert!(file == expected(0, size), "wrong bytes");
+    let dd = api.dd();
+    eventually("grant completed", || dd.grants.count() == 0).await;
+    let h = dd.stats.history();
+    assert_eq!((h[0].outcome, h[0].covered), (Outcome::Completed, size));
+    assert!(h[0].resumes >= 5, "{}", h[0].resumes);
+}
+
+#[tokio::test]
+async fn if_range_with_a_stale_etag_returns_the_whole_file() {
+    let api = Api::start(64 * KIB, &[]).await;
+    let g = api.create("alice").await;
+    let etag = g.json["etag"].as_str().unwrap().to_owned();
+    // Matching validator: the range is honoured.
+    let resp = api
+        .file(&g)
+        .header("range", "bytes=10-19")
+        .header("if-range", &etag)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status().as_u16(), 206);
+    assert_eq!(
+        header(&resp, "content-range").as_deref(),
+        Some("bytes 10-19/65536")
+    );
+    assert_eq!(read_all(resp).await, expected(10, 10));
+    // Stale (or weak) validator: the whole file. Each completes its grant, so one grant each.
+    for stale in ["\"stale\"", &format!("W/{etag}")] {
+        let g = api.create("alice").await;
+        let resp = api
+            .file(&g)
+            .header("range", "bytes=10-19")
+            .header("if-range", stale)
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(resp.status().as_u16(), 200, "{stale}");
+        assert!(header(&resp, "content-range").is_none());
+        assert_eq!(header(&resp, "content-length").as_deref(), Some("65536"));
+        assert!(read_all(resp).await == expected(0, 64 * KIB));
+    }
+}
+
+#[tokio::test]
+async fn eleventh_download_is_rejected() {
+    let api = Api::start(KIB, &[]).await;
+    let mut grants = Vec::new();
+    for _ in 0..10 {
+        grants.push(api.create("alice").await);
+    }
+    let body = json!({ "backend": "plex", "item_id": ITEM });
+    let (status, json) = api.post_create(&download_jwt("alice"), body.clone()).await;
+    assert_eq!(status, 429, "{json}");
+    assert_eq!(json["error"]["code"], "TOO_MANY_DOWNLOADS");
+    // Another user is unaffected.
+    api.create("bob").await;
+    // Cancelling one frees a slot.
+    let g = &grants[3];
+    let resp = api
+        .http
+        .delete(api.url(&format!("/api/v1/downloads/{}", g.id)))
+        .bearer_auth(&g.token)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status().as_u16(), 204);
+    assert_eq!(api.status(g).await.0, 404);
+    let (status, json) = api.post_create(&download_jwt("alice"), body).await;
+    assert_eq!(status, 201, "{json}");
+    let h = api.dd().stats.history();
+    assert_eq!(h[0].outcome, Outcome::Cancelled);
+}
+
+#[tokio::test]
+async fn token_of_another_grant_is_refused() {
+    let api = Api::start(KIB, &[]).await;
+    let a = api.create("alice").await;
+    let b = api.create("alice").await;
+    let get = |path: String| api.http.get(api.url(&path));
+    let status_path = format!("/api/v1/downloads/{}", a.id);
+    let file_path = format!("/api/v1/downloads/{}/file", a.id);
+
+    // Another grant's token, or garbage: not found.
+    for t in [&b.token[..], "garbage"] {
+        let resp = get(file_path.clone()).bearer_auth(t).send().await.unwrap();
+        let (s, j) = json_of(resp).await;
+        assert_eq!(
+            (s, &j["error"]["code"]),
+            (404, &json!("DOWNLOAD_NOT_FOUND"))
+        );
+        let resp = get(status_path.clone())
+            .bearer_auth(t)
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(resp.status().as_u16(), 404);
+    }
+    // No token at all: unauthenticated.
+    let (s, j) = json_of(get(file_path.clone()).send().await.unwrap()).await;
+    assert_eq!((s, &j["error"]["code"]), (401, &json!("UNAUTHENTICATED")));
+
+    // `?token=` works like the header...
+    let with_query = |path: &str, t: &str| get(format!("{path}?token={t}"));
+    let (s, j) = json_of(with_query(&status_path, &a.token).send().await.unwrap()).await;
+    assert_eq!((s, &j["download_id"]), (200, &json!(a.id)));
+    let resp = with_query(&status_path, &b.token).send().await.unwrap();
+    assert_eq!(resp.status().as_u16(), 404);
+    // ...but the header wins when both are present.
+    let resp = with_query(&status_path, "garbage")
+        .bearer_auth(&a.token)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status().as_u16(), 200);
+    let resp = with_query(&status_path, &a.token)
+        .bearer_auth("garbage")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status().as_u16(), 404);
+    let resp = with_query(&file_path, &a.token)
+        .header("range", "bytes=0-99")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status().as_u16(), 206);
+    assert_eq!(read_all(resp).await, expected(0, 100));
+    let resp = api
+        .http
+        .delete(api.url(&format!("{status_path}?token={}", a.token)))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status().as_u16(), 204);
+    assert_eq!(api.status(&a).await.0, 404);
+    assert_eq!(api.status(&b).await.0, 200, "the other grant is untouched");
+}
+
+#[tokio::test]
+async fn hostile_ranges_and_item_ids() {
+    let api = Api::start(1000, &[]).await;
+    let g = api.create("alice").await;
+    for range in ["bytes=5-1", "bytes=0-1,5-6", "bytes=1000-", "bytes=-0"] {
+        let resp = api.file(&g).header("range", range).send().await.unwrap();
+        assert_eq!(resp.status().as_u16(), 416, "{range}");
+        assert_eq!(
+            header(&resp, "content-range").as_deref(),
+            Some("bytes */1000"),
+            "{range}"
+        );
+        let (_, j) = json_of(resp).await;
+        assert_eq!(j["error"]["code"], "RANGE_NOT_SATISFIABLE", "{range}");
+    }
+    let jwt = download_jwt("alice");
+    for body in [
+        json!({ "backend": "jellyfin", "item_id": "../x" }),
+        json!({ "backend": "jellyfin", "item_id": "a/b" }),
+        json!({ "backend": "jellyfin", "item_id": "x".repeat(65) }),
+        json!({ "backend": "ftp", "item_id": ITEM }),
+        json!({ "backend": "jellyfin", "item_id": ITEM, "kind": "album" }),
+        json!({ "item_id": ITEM }),
+        json!("not an object"),
+    ] {
+        let (status, j) = api.post_create(&jwt, body.clone()).await;
+        assert_eq!(
+            (status, &j["error"]["code"]),
+            (400, &json!("INVALID_PAYLOAD")),
+            "{body}"
+        );
+    }
+    assert_eq!(
+        api.fake.requests(),
+        0,
+        "no file request reached the backend"
+    );
+}
+
+#[tokio::test]
+async fn backend_errors_are_mapped_without_leaking_details() {
+    let api = Api::start(KIB, &[]).await;
+    let jwt = download_jwt("alice");
+    let (status, j) = api
+        .post_create(&jwt, json!({ "backend": "plex", "item_id": "nope" }))
+        .await;
+    assert_eq!(
+        (status, &j["error"]["code"]),
+        (404, &json!("DOWNLOAD_NOT_FOUND"))
+    );
+    // An empty file is refused by the backend layer: a generic 502, no inner detail.
+    api.fake.knobs.size.store(0, Ordering::SeqCst);
+    let (status, j) = api
+        .post_create(&jwt, json!({ "backend": "jellyfin", "item_id": ITEM }))
+        .await;
+    assert_eq!(
+        (status, &j["error"]["code"]),
+        (502, &json!("BACKEND_UNAVAILABLE"))
+    );
+    assert_eq!(j["error"]["message"], "the media backend is unavailable");
+
+    // Only Jellyfin configured: Plex is 503.
+    let only_jf = enabled_server(&api.fake, &[]).await;
+    let resp = reqwest::Client::new()
+        .post(format!("http://{}/api/v1/downloads", only_jf.addr))
+        .bearer_auth(&jwt)
+        .body(json!({ "backend": "plex", "item_id": ITEM }).to_string())
+        .send()
+        .await
+        .unwrap();
+    let (status, j) = json_of(resp).await;
+    assert_eq!(
+        (status, &j["error"]["code"]),
+        (503, &json!("BACKEND_UNAVAILABLE"))
+    );
+}
+
+#[tokio::test]
+async fn preemption() {
+    let api = Api::start(8 * MIB, &[("FLICKDD_RATE_MBPS", "1")]).await;
+    let g = api.create("alice").await;
+    let first = api.file(&g).send().await.unwrap(); // never read
+    assert_eq!(first.status().as_u16(), 200);
+    let second = api
+        .file(&g)
+        .header("range", "bytes=0-99")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(
+        second.status().as_u16(),
+        206,
+        "a newer request preempts, never 409"
+    );
+    assert_eq!(read_all(second).await, expected(0, 100));
+    let t = Instant::now();
+    let (got, failed) = read_until_end(first).await;
+    assert!(
+        failed || (got.len() as u64) < 8 * MIB,
+        "the first stream must end early ({} bytes)",
+        got.len()
+    );
+    assert!((got.len() as u64) < 8 * MIB);
+    assert!(t.elapsed() < Duration::from_secs(3), "{:?}", t.elapsed());
+    assert!(got == expected(0, got.len() as u64));
+    assert_eq!(api.dd().grants.count(), 1, "the grant stays");
+}
+
+#[tokio::test]
+async fn source_changed_gives_409() {
+    let api = Api::start(64 * KIB, &[]).await;
+    let g = api.create("alice").await;
+    api.fake.knobs.size.fetch_add(1, Ordering::SeqCst);
+    let (status, j) = json_of(api.file(&g).send().await.unwrap()).await;
+    assert_eq!(
+        (status, &j["error"]["code"]),
+        (409, &json!("SOURCE_CHANGED"))
+    );
+    assert_eq!(api.status(&g).await.0, 404);
+    let h = api.dd().stats.history();
+    assert_eq!(h[0].outcome, Outcome::SourceChanged);
+}
+
+#[tokio::test]
+async fn rate_is_capped() {
+    let size = 3 * MIB;
+    let api = Api::start(size, &[("FLICKDD_RATE_MBPS", "1")]).await;
+    let one = api.create("alice").await;
+    let t = Instant::now();
+    let body = read_all(api.file(&one).send().await.unwrap()).await;
+    let secs = t.elapsed().as_secs_f64();
+    assert!(body == expected(0, size), "wrong bytes");
+    // (3 MiB - 256 KiB of burst) at 1 MiB/s = 2.75 s.
+    assert!((2.5..4.5).contains(&secs), "took {secs} s");
+
+    // Two grants at once: each is capped on its own (a shared cap would take twice as long).
+    let (a, b) = (api.create("alice").await, api.create("alice").await);
+    let t = Instant::now();
+    let (ra, rb) = tokio::join!(
+        async { read_all(api.file(&a).send().await.unwrap()).await },
+        async { read_all(api.file(&b).send().await.unwrap()).await },
+    );
+    let secs = t.elapsed().as_secs_f64();
+    assert!(ra.len() as u64 == size && rb.len() as u64 == size);
+    assert!((2.5..4.5).contains(&secs), "took {secs} s");
+}
+
+#[tokio::test]
+async fn request_rate_guard() {
+    let api = Api::start(64 * KIB, &[("FLICKDD_MAX_REQUESTS_PER_MIN", "3")]).await;
+    let g = api.create("alice").await;
+    let ranged = || api.file(&g).header("range", "bytes=0-9");
+    for _ in 0..3 {
+        let resp = ranged().send().await.unwrap();
+        assert_eq!(resp.status().as_u16(), 206);
+        assert_eq!(read_all(resp).await, expected(0, 10));
+    }
+    let resp = ranged().send().await.unwrap();
+    assert_eq!(resp.status().as_u16(), 429);
+    let retry: u64 = header(&resp, "retry-after").unwrap().parse().unwrap();
+    assert!((1..=60).contains(&retry), "{retry}");
+    let (_, j) = json_of(resp).await;
+    assert_eq!(j["error"]["code"], "RATE_LIMITED");
+    // The status route is not a stream request.
+    assert_eq!(api.status(&g).await.0, 200);
+}
+
+#[tokio::test]
+async fn no_range_request_with_cut_upstream_still_completes_or_truncates_cleanly() {
+    let api = Api::start(MIB, &[("FLICKDD_UPSTREAM_RETRIES", "0")]).await;
+    let g = api.create("alice").await;
+    api.fake.knobs.cut_after.store(100_000, Ordering::SeqCst);
+    let resp = api.file(&g).send().await.unwrap();
+    assert_eq!(resp.status().as_u16(), 200);
+    assert_eq!(header(&resp, "content-length"), Some(MIB.to_string()));
+    let (mut file, failed) = read_until_end(resp).await;
+    assert!(failed, "a truncated body must be reported as an error");
+    assert!(file.len() <= 100_000, "{}", file.len());
+    assert!(file == expected(0, file.len() as u64));
+    let off = file.len();
+    let resp = api
+        .file(&g)
+        .header("range", format!("bytes={off}-"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status().as_u16(), 206);
+    file.extend_from_slice(&read_all(resp).await);
+    assert!(file == expected(0, MIB), "wrong bytes");
+    let dd = api.dd();
+    eventually("grant completed", || dd.grants.count() == 0).await;
+}
+
+#[tokio::test]
+async fn head_does_not_preempt_or_open_upstream() {
+    let api = Api::start(64 * KIB, &[]).await;
+    let g = api.create("alice").await;
+    let resp = api
+        .http
+        .head(api.url(&format!("/api/v1/downloads/{}/file", g.id)))
+        .bearer_auth(&g.token)
+        .header("range", "bytes=0-9")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status().as_u16(), 206);
+    assert_eq!(header(&resp, "content-length").as_deref(), Some("10"));
+    assert_eq!(
+        header(&resp, "content-range").as_deref(),
+        Some("bytes 0-9/65536")
+    );
+    assert_eq!(api.fake.requests(), 0);
+    let v = api.dd().grants.active_views(now_ms());
+    assert_eq!((v[0].segments, v[0].streaming), (0, false));
 }
