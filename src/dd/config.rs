@@ -61,11 +61,22 @@ fn backend(
 }
 
 impl DdConfig {
+    /// `FLICKDD_ENABLED` (default false) decides everything else: FlickDD is an optional
+    /// module and must never keep FlickSync from starting. With the flag off, every other
+    /// `FLICKDD_*` variable is ignored (neither parsed nor validated) and the defaults apply,
+    /// without any backend. With the flag on, they are all parsed and validated.
     pub fn from_lookup(env: Lookup) -> Result<Self, ConfigError> {
-        const MIB: u64 = 1024 * 1024;
-        let inconsistent = |m: &str| ConfigError::Inconsistent(m.to_owned());
+        if !parse_bool(env, "FLICKDD_ENABLED", false)? {
+            return Self::read(&|_| None, false);
+        }
+        let c = Self::read(env, true)?;
+        c.validate()?;
+        Ok(c)
+    }
 
-        let enabled = parse_bool(env, "FLICKDD_ENABLED", false)?;
+    /// Every `FLICKDD_*` value but the flag, with its default.
+    fn read(env: Lookup, enabled: bool) -> Result<Self, ConfigError> {
+        const MIB: u64 = 1024 * 1024;
         let jellyfin = backend(
             env,
             "Jellyfin",
@@ -73,13 +84,7 @@ impl DdConfig {
             "FLICKDD_JELLYFIN_API_KEY",
         )?;
         let plex = backend(env, "Plex", "FLICKDD_PLEX_URL", "FLICKDD_PLEX_TOKEN")?;
-        if enabled && jellyfin.is_none() && plex.is_none() {
-            return Err(inconsistent(
-                "FLICKDD_ENABLED=true requires at least one backend (Jellyfin or Plex)",
-            ));
-        }
-
-        let c = Self {
+        Ok(Self {
             enabled,
             jellyfin,
             plex,
@@ -96,8 +101,18 @@ impl DdConfig {
             upstream_retries: parse(env, "FLICKDD_UPSTREAM_RETRIES", 2u32)?,
             max_requests_per_min: parse(env, "FLICKDD_MAX_REQUESTS_PER_MIN", 120u32)?,
             max_overserve: parse(env, "FLICKDD_MAX_OVERSERVE", 2u64)?,
-        };
+        })
+    }
 
+    /// Coherence of an enabled configuration: a backend, and limits that make sense.
+    fn validate(&self) -> Result<(), ConfigError> {
+        let inconsistent = |m: &str| Err(ConfigError::Inconsistent(m.to_owned()));
+        let c = self;
+        if c.jellyfin.is_none() && c.plex.is_none() {
+            return inconsistent(
+                "FLICKDD_ENABLED=true requires at least one backend (Jellyfin or Plex)",
+            );
+        }
         if c.max_parallel == 0
             || c.max_global == 0
             || c.rate_bps == 0
@@ -108,21 +123,17 @@ impl DdConfig {
             || c.stall_timeout_ms == 0
             || c.upstream_timeout_ms == 0
         {
-            return Err(inconsistent(
+            return inconsistent(
                 "FLICKDD limits (parallel, global, rate, chunk, range, requests/min, overserve, stall and upstream timeouts) must be >= 1",
-            ));
+            );
         }
         if c.chunk_bytes > c.max_range_bytes {
-            return Err(inconsistent(
-                "FLICKDD_CHUNK_MB must not exceed FLICKDD_MAX_RANGE_MB",
-            ));
+            return inconsistent("FLICKDD_CHUNK_MB must not exceed FLICKDD_MAX_RANGE_MB");
         }
         if c.max_parallel > c.max_global {
-            return Err(inconsistent(
-                "FLICKDD_MAX_PARALLEL must not exceed FLICKDD_MAX_GLOBAL",
-            ));
+            return inconsistent("FLICKDD_MAX_PARALLEL must not exceed FLICKDD_MAX_GLOBAL");
         }
-        Ok(c)
+        Ok(())
     }
 }
 
@@ -137,6 +148,17 @@ mod tests {
             .map(|(k, v)| (k.to_string(), v.to_string()))
             .collect();
         DdConfig::from_lookup(&|k| m.get(k).cloned())
+    }
+
+    /// `vars` on top of an enabled configuration with a Jellyfin backend.
+    fn enabled(vars: &[(&str, &str)]) -> Result<DdConfig, ConfigError> {
+        let mut all = vec![
+            ("FLICKDD_ENABLED", "true"),
+            ("FLICKDD_JELLYFIN_URL", "http://jf:8096"),
+            ("FLICKDD_JELLYFIN_API_KEY", "abc"),
+        ];
+        all.extend_from_slice(vars);
+        cfg(&all)
     }
 
     #[test]
@@ -170,25 +192,28 @@ mod tests {
 
     #[test]
     fn a_backend_needs_both_url_and_secret() {
-        assert!(cfg(&[("FLICKDD_PLEX_URL", "http://plex:32400")]).is_err());
-        assert!(cfg(&[("FLICKDD_PLEX_TOKEN", "t")]).is_err());
+        assert!(enabled(&[("FLICKDD_PLEX_URL", "http://plex:32400")]).is_err());
+        assert!(enabled(&[("FLICKDD_PLEX_TOKEN", "t")]).is_err());
     }
 
     #[test]
     fn rejects_nonsense_limits() {
-        assert!(cfg(&[("FLICKDD_MAX_PARALLEL", "0")]).is_err());
-        assert!(cfg(&[("FLICKDD_RATE_MBPS", "0")]).is_err());
-        assert!(cfg(&[("FLICKDD_CHUNK_MB", "0")]).is_err());
-        assert!(cfg(&[("FLICKDD_CHUNK_MB", "128"), ("FLICKDD_MAX_RANGE_MB", "64")]).is_err());
-        assert!(cfg(&[("FLICKDD_MAX_OVERSERVE", "0")]).is_err());
+        assert!(enabled(&[]).is_ok());
+        assert!(enabled(&[("FLICKDD_MAX_PARALLEL", "0")]).is_err());
+        assert!(enabled(&[("FLICKDD_RATE_MBPS", "0")]).is_err());
+        assert!(enabled(&[("FLICKDD_CHUNK_MB", "0")]).is_err());
+        assert!(enabled(&[("FLICKDD_CHUNK_MB", "128"), ("FLICKDD_MAX_RANGE_MB", "64")]).is_err());
+        assert!(enabled(&[("FLICKDD_MAX_OVERSERVE", "0")]).is_err());
+        assert!(enabled(&[("FLICKDD_MAX_PARALLEL", "20"), ("FLICKDD_MAX_GLOBAL", "10")]).is_err());
+        assert!(enabled(&[("FLICKDD_MAX_PARALLEL", "ten")]).is_err());
     }
 
     #[test]
     fn timeouts_must_be_at_least_one_second() {
-        assert!(cfg(&[("FLICKDD_STALL_TIMEOUT", "0")]).is_err());
-        assert!(cfg(&[("FLICKDD_UPSTREAM_TIMEOUT", "0")]).is_err());
+        assert!(enabled(&[("FLICKDD_STALL_TIMEOUT", "0")]).is_err());
+        assert!(enabled(&[("FLICKDD_UPSTREAM_TIMEOUT", "0")]).is_err());
         assert!(
-            cfg(&[
+            enabled(&[
                 ("FLICKDD_STALL_TIMEOUT", "1"),
                 ("FLICKDD_UPSTREAM_TIMEOUT", "1")
             ])
@@ -197,8 +222,38 @@ mod tests {
     }
 
     #[test]
+    fn disabled_ignores_every_other_flickdd_variable() {
+        // Each of these refuses an enabled configuration; none may block a disabled one.
+        let broken: &[&[(&str, &str)]] = &[
+            &[("FLICKDD_PLEX_URL", "http://plex:32400")],
+            &[("FLICKDD_PLEX_TOKEN", "t")],
+            &[("FLICKDD_MAX_PARALLEL", "0")],
+            &[("FLICKDD_MAX_PARALLEL", "ten")],
+            &[("FLICKDD_RATE_MBPS", "-1")],
+            &[("FLICKDD_CHUNK_MB", "128"), ("FLICKDD_MAX_RANGE_MB", "64")],
+            &[("FLICKDD_MAX_PARALLEL", "20"), ("FLICKDD_MAX_GLOBAL", "10")],
+            &[("FLICKDD_STALL_TIMEOUT", "0")],
+        ];
+        for vars in broken {
+            assert!(
+                enabled(vars).is_err(),
+                "{vars:?} must be refused when enabled"
+            );
+            for flag in [None, Some("false"), Some("0")] {
+                let mut all = vars.to_vec();
+                all.extend(flag.map(|f| ("FLICKDD_ENABLED", f)));
+                let c = cfg(&all).unwrap_or_else(|e| panic!("{all:?}: {e}"));
+                assert!(!c.enabled);
+                assert!(c.jellyfin.is_none() && c.plex.is_none(), "{all:?}");
+                assert_eq!(c.max_parallel, 10, "{all:?}: defaults apply");
+            }
+        }
+    }
+
+    #[test]
     fn debug_never_prints_backend_secrets() {
         let c = cfg(&[
+            ("FLICKDD_ENABLED", "true"),
             ("FLICKDD_JELLYFIN_URL", "http://jf:8096"),
             ("FLICKDD_JELLYFIN_API_KEY", "s3cr3t-jf-key"),
             ("FLICKDD_PLEX_URL", "http://plex:32400"),

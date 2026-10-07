@@ -382,6 +382,8 @@ impl Config {
             data_dir: parse(env, "FLICKSYNC_DATA_DIR", "./data".to_owned())?,
             keys_configured,
             public,
+            // Only `FLICKDD_ENABLED` is read while FlickDD is off: a stray FLICKDD_* value can
+            // never keep FlickSync from starting.
             dd: crate::dd::config::DdConfig::from_lookup(env)?,
         })
     }
@@ -492,6 +494,23 @@ mod tests {
         assert!(cfg(&[("FLICKSYNC_ADMIN_TOKEN", "short")]).is_err());
         let c = cfg(&[("FLICKSYNC_ADMIN_TOKEN", "0123456789abcdef0123")]).unwrap();
         assert_eq!(c.http.admin_token.as_deref(), Some("0123456789abcdef0123"));
+    }
+
+    #[test]
+    fn flickdd_variables_only_matter_when_flickdd_is_enabled() {
+        let broken = [
+            ("FLICKDD_PLEX_URL", "http://plex:32400"),
+            ("FLICKDD_MAX_PARALLEL", "0"),
+            ("FLICKDD_CHUNK_MB", "nope"),
+        ];
+        let c = cfg(&broken).unwrap();
+        assert!(!c.dd.enabled);
+        let mut off = broken.to_vec();
+        off.push(("FLICKDD_ENABLED", "false"));
+        assert!(cfg(&off).is_ok());
+        let mut on = broken.to_vec();
+        on.push(("FLICKDD_ENABLED", "true"));
+        assert!(cfg(&on).is_err());
     }
 
     #[test]
