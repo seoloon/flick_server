@@ -44,6 +44,9 @@ pub enum StartError {
     Auth(#[from] AuthConfigError),
 }
 
+/// Applies a new tracing filter to the running subscriber.
+pub type LogControl = Arc<dyn Fn(&str) -> Result<(), String> + Send + Sync>;
+
 fn build_server(settings: &Settings) -> Result<ServerRuntime, StartError> {
     let mut cfg = settings.config()?;
     invite::ensure_keys(&mut cfg)?;
@@ -62,6 +65,7 @@ pub struct AppState {
     pub metrics: Arc<Metrics>,
     pub started_at: Instant,
     clock: Arc<dyn Clock>,
+    log_control: Arc<RwLock<Option<LogControl>>>,
 }
 
 impl AppState {
@@ -81,6 +85,7 @@ impl AppState {
             metrics: Arc::new(Metrics::default()),
             started_at: Instant::now(),
             clock,
+            log_control: Arc::new(RwLock::new(None)),
         };
         for id in ModuleId::ALL {
             if state.settings.is_enabled(id.scope()) {
@@ -96,6 +101,30 @@ impl AppState {
             .read()
             .unwrap_or_else(|e| e.into_inner())
             .clone()
+    }
+
+    pub fn set_log_control(&self, control: LogControl) {
+        *self.log_control.write().unwrap_or_else(|e| e.into_inner()) = Some(control);
+    }
+
+    /// Rebuild the server runtime from the stored settings and swap it in. On error the
+    /// runtime in force is kept. Running modules are not restarted.
+    pub fn reload_server(&self) -> Result<(), StartError> {
+        let next = build_server(&self.settings)?;
+        let level = next.cfg.log_level.clone();
+        *self.server.write().unwrap_or_else(|e| e.into_inner()) = Arc::new(next);
+        let control = self
+            .log_control
+            .read()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone();
+        if let Some(control) = control
+            && let Err(e) = control(&level)
+        {
+            warn!(error = %e, "could not apply the log level");
+        }
+        info!("server settings reloaded");
+        Ok(())
     }
 
     pub fn sync_opt(&self) -> Option<Arc<SyncRuntime>> {

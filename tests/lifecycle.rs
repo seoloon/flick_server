@@ -183,3 +183,131 @@ fn concurrent_lifecycle_calls_are_serialised() {
     let a = s.state.sync().unwrap();
     assert!(std::sync::Arc::ptr_eq(&a, &s.state.sync().unwrap()));
 }
+
+use axum::body::Body;
+use axum::http::Request;
+use tower::ServiceExt;
+
+async fn preflight(s: &TestServer, origin: &str) -> Option<String> {
+    let resp = flicksync::app::build_router(s.state.clone())
+        .oneshot(
+            Request::builder()
+                .method(Method::OPTIONS)
+                .uri("/api/v1/rooms")
+                .header("origin", origin)
+                .header("access-control-request-method", "POST")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    resp.headers()
+        .get("access-control-allow-origin")
+        .map(|v| v.to_str().unwrap().to_owned())
+}
+
+#[tokio::test]
+async fn a_server_reload_changes_cors_origins_for_new_requests() {
+    let s = TestServer::start(&[]).await;
+    assert_eq!(
+        preflight(&s, "https://app.example").await.as_deref(),
+        Some("https://app.example")
+    );
+    s.state
+        .settings
+        .put(
+            Scope::Server,
+            patch(&[("FLICKSYNC_CORS_ORIGINS", "https://new.example")]),
+        )
+        .unwrap();
+    assert_eq!(
+        preflight(&s, "https://app.example").await.as_deref(),
+        Some("https://app.example"),
+        "not before the reload"
+    );
+    s.state.reload_server().unwrap();
+    assert_eq!(preflight(&s, "https://app.example").await, None);
+    assert_eq!(
+        preflight(&s, "https://new.example").await.as_deref(),
+        Some("https://new.example")
+    );
+}
+
+#[tokio::test]
+async fn a_server_reload_swaps_the_signing_keys() {
+    let s = TestServer::start(&[]).await;
+    let k1 = token_for("alice", SERVER, "k1", SECRET, &["*"]);
+    let k2 = token_for("alice", OTHER_SERVER, "k2", OTHER_SECRET, &["*"]);
+    assert_eq!(
+        s.http(Method::POST, "/api/v1/rooms", Some(&k1), None)
+            .await
+            .0,
+        StatusCode::CREATED
+    );
+
+    // Keep only k2.
+    s.state
+        .settings
+        .put(
+            Scope::Server,
+            patch(&[(
+                "FLICKSYNC_AUTH_KEYS",
+                &format!("k2:{OTHER_SERVER}:{OTHER_SECRET}"),
+            )]),
+        )
+        .unwrap();
+    s.state.reload_server().unwrap();
+    assert_eq!(
+        s.http(Method::POST, "/api/v1/rooms", Some(&k1), None)
+            .await
+            .0,
+        StatusCode::UNAUTHORIZED,
+        "removed key"
+    );
+    assert_eq!(
+        s.http(Method::POST, "/api/v1/rooms", Some(&k2), None)
+            .await
+            .0,
+        StatusCode::CREATED,
+        "kept key"
+    );
+}
+
+#[tokio::test]
+async fn a_malformed_key_list_is_refused_and_the_old_keys_stay() {
+    let s = TestServer::start(&[]).await;
+    assert!(
+        s.state
+            .settings
+            .put(
+                Scope::Server,
+                patch(&[("FLICKSYNC_AUTH_KEYS", "not-a-key")])
+            )
+            .is_err()
+    );
+    s.state.reload_server().unwrap();
+    assert_eq!(
+        s.http(Method::POST, "/api/v1/rooms", Some(&token("alice")), None)
+            .await
+            .0,
+        StatusCode::CREATED
+    );
+}
+
+#[tokio::test]
+async fn a_server_reload_applies_the_log_level() {
+    let s = TestServer::start(&[]).await;
+    let seen = std::sync::Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
+    let sink = seen.clone();
+    s.state
+        .set_log_control(std::sync::Arc::new(move |level: &str| {
+            sink.lock().unwrap().push(level.to_owned());
+            Ok(())
+        }));
+    s.state
+        .settings
+        .put(Scope::Server, patch(&[("FLICKSYNC_LOG_LEVEL", "debug")]))
+        .unwrap();
+    s.state.reload_server().unwrap();
+    assert_eq!(seen.lock().unwrap().as_slice(), ["debug"]);
+}

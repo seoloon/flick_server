@@ -10,7 +10,7 @@ use axum::response::Response;
 use serde::Deserialize;
 use tracing::warn;
 
-use crate::api::auth::authenticate;
+use crate::api::auth::authenticate_with;
 use crate::api::error::ApiError;
 use crate::app::AppState;
 use crate::errors::{Error, ErrorCode};
@@ -41,11 +41,13 @@ pub async fn upgrade(
     headers: HeaderMap,
     ws: WebSocketUpgrade,
 ) -> Result<Response, ApiError> {
-    if !origin_allowed(&headers, &state.server().cfg.http.allowed_origins) {
+    // One snapshot for the whole upgrade: origin check and authentication agree.
+    let server = state.server();
+    if !origin_allowed(&headers, &server.cfg.http.allowed_origins) {
         warn!("websocket upgrade rejected: origin not allowed");
         return Err(Error::new(ErrorCode::Forbidden, "origin not allowed").into());
     }
-    let identity = authenticate(&state, &headers, query.access_token.as_deref())?;
+    let identity = authenticate_with(&state, &server, &headers, query.access_token.as_deref())?;
     let sync = state.sync()?;
     // Fail with a regular HTTP error (404/403/409...) before upgrading when possible.
     sync.manager.can_attach(&room_id, &identity)?;

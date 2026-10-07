@@ -19,7 +19,7 @@ use crate::app::AppState;
 use crate::websocket;
 
 pub fn router(state: AppState) -> Router {
-    let cors = cors_layer(&state.server().cfg.http.allowed_origins);
+    let cors = cors_layer(&state);
     let body_limit = state.boot.http.max_body_bytes;
 
     // Every admin response (success, 204 and errors) is uncacheable.
@@ -36,7 +36,7 @@ pub fn router(state: AppState) -> Router {
         .route("/admin/v1/dd/{id}", delete(admin::dd_cancel))
         .layer(axum::middleware::map_response(admin::no_store_layer));
 
-    let router = Router::new()
+    Router::new()
         .merge(admin)
         .route("/health", get(health::health))
         .route("/ready", get(health::ready))
@@ -53,37 +53,37 @@ pub fn router(state: AppState) -> Router {
         )
         .route("/api/v1/downloads/{id}/file", get(downloads::file))
         .layer(DefaultBodyLimit::max(body_limit))
-        .with_state(state);
-    match cors {
-        Some(cors) => router.layer(cors),
-        None => router,
-    }
+        .with_state(state)
+        .layer(cors)
 }
 
-/// CORS is only enabled for explicitly configured origins; there is no wildcard.
-/// Native clients do not send `Origin` and are unaffected either way.
-fn cors_layer(origins: &[String]) -> Option<CorsLayer> {
-    if origins.is_empty() {
-        return None;
-    }
-    let values: Vec<HeaderValue> = origins.iter().filter_map(|o| o.parse().ok()).collect();
-    Some(
-        CorsLayer::new()
-            .allow_origin(AllowOrigin::list(values))
-            .allow_methods([Method::GET, Method::POST, Method::DELETE])
-            .allow_headers([
-                header::AUTHORIZATION,
-                header::CONTENT_TYPE,
-                header::RANGE,
-                header::IF_RANGE,
-            ])
-            .expose_headers([
-                header::CONTENT_RANGE,
-                header::ETAG,
-                header::ACCEPT_RANGES,
-                header::CONTENT_LENGTH,
-                header::RETRY_AFTER,
-            ])
-            .max_age(Duration::from_secs(600)),
-    )
+/// CORS follows the origins of the server runtime in force, read on every request; there is
+/// no wildcard. Native clients do not send `Origin` and are unaffected either way.
+fn cors_layer(state: &AppState) -> CorsLayer {
+    let state = state.clone();
+    CorsLayer::new()
+        .allow_origin(AllowOrigin::predicate(move |origin: &HeaderValue, _| {
+            state
+                .server()
+                .cfg
+                .http
+                .allowed_origins
+                .iter()
+                .any(|o| o.as_bytes().eq_ignore_ascii_case(origin.as_bytes()))
+        }))
+        .allow_methods([Method::GET, Method::POST, Method::DELETE])
+        .allow_headers([
+            header::AUTHORIZATION,
+            header::CONTENT_TYPE,
+            header::RANGE,
+            header::IF_RANGE,
+        ])
+        .expose_headers([
+            header::CONTENT_RANGE,
+            header::ETAG,
+            header::ACCEPT_RANGES,
+            header::CONTENT_LENGTH,
+            header::RETRY_AFTER,
+        ])
+        .max_age(Duration::from_secs(600))
 }

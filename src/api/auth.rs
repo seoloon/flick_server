@@ -7,7 +7,7 @@ use axum::http::request::Parts;
 use tracing::warn;
 
 use super::error::ApiError;
-use crate::app::AppState;
+use crate::app::{AppState, ServerRuntime};
 use crate::auth::Identity;
 use crate::errors::{Error, ErrorCode};
 
@@ -27,13 +27,24 @@ pub fn authenticate(
     headers: &HeaderMap,
     query_token: Option<&str>,
 ) -> Result<Identity, ApiError> {
+    authenticate_with(state, &state.server(), headers, query_token)
+}
+
+/// Like [`authenticate`], against a server runtime the caller already holds, so one request
+/// sees a single snapshot even if the server settings are reloaded meanwhile.
+pub fn authenticate_with(
+    state: &AppState,
+    server: &ServerRuntime,
+    headers: &HeaderMap,
+    query_token: Option<&str>,
+) -> Result<Identity, ApiError> {
     let token = bearer(headers).or(query_token.filter(|t| !t.is_empty()));
     let result = match token {
         None => Err(Error::new(
             ErrorCode::Unauthenticated,
             "missing bearer token",
         )),
-        Some(t) => state.server().auth.verify(t),
+        Some(t) => server.auth.verify(t),
     };
     result.map_err(|e| {
         state.metrics.auth_failures_total.inc();

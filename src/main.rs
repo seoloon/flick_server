@@ -4,19 +4,28 @@ use std::process::ExitCode;
 use std::sync::Arc;
 use std::time::Duration;
 
-use flicksync::app::{self, AppState};
+use flicksync::app::{self, AppState, LogControl};
 use flicksync::config::{Config, LogFormat};
 use flicksync::invite::{self, KeySource};
 use flicksync::settings::{Env, Settings};
 use tracing_subscriber::EnvFilter;
 
-fn init_tracing(cfg: &Config) {
+fn init_tracing(cfg: &Config) -> LogControl {
+    use tracing_subscriber::layer::SubscriberExt;
+    use tracing_subscriber::util::SubscriberInitExt;
+    use tracing_subscriber::{fmt, reload};
+
     let filter = EnvFilter::try_new(&cfg.log_level).unwrap_or_else(|_| EnvFilter::new("info"));
-    let builder = tracing_subscriber::fmt().with_env_filter(filter);
+    let (filter, handle) = reload::Layer::new(filter);
+    let registry = tracing_subscriber::registry().with(filter);
     match cfg.log_format {
-        LogFormat::Json => builder.json().init(),
-        LogFormat::Pretty => builder.init(),
+        LogFormat::Json => registry.with(fmt::layer().json()).init(),
+        LogFormat::Pretty => registry.with(fmt::layer()).init(),
     }
+    Arc::new(move |level: &str| {
+        let next = EnvFilter::try_new(level).map_err(|e| e.to_string())?;
+        handle.reload(next).map_err(|e| e.to_string())
+    })
 }
 
 /// `flicksync healthcheck`: dependency-free probe for container HEALTHCHECK
@@ -133,7 +142,7 @@ async fn main() -> ExitCode {
         return invite_command(cfg, &rest);
     }
 
-    init_tracing(&cfg);
+    let log_control = init_tracing(&cfg);
     let key_source = match invite::ensure_keys(&mut cfg) {
         Ok(s) => s,
         Err(e) => {
@@ -164,6 +173,7 @@ async fn main() -> ExitCode {
             return ExitCode::from(2);
         }
     };
+    state.set_log_control(log_control);
     if let Err(e) = app::serve(state).await {
         tracing::error!(error = %e, "fatal error");
         return ExitCode::FAILURE;
