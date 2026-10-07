@@ -82,7 +82,7 @@ async fn invite_returns_the_link_and_a_qr_and_is_not_cacheable() {
         .await;
     assert_eq!(st, StatusCode::OK);
     let url = inv["url"].as_str().unwrap();
-    assert!(url.starts_with("flicksync://sync.example.com/?v=1&tls=1#k="));
+    assert!(url.starts_with("flickserver://sync.example.com/?v=1&tls=1#k="));
     let parsed: flicksync::invite::Invitation = url.parse().unwrap();
     assert_eq!(parsed.endpoint.authority, "sync.example.com");
     assert_eq!(inv["address"], "https://sync.example.com");
@@ -91,7 +91,7 @@ async fn invite_returns_the_link_and_a_qr_and_is_not_cacheable() {
     // A path prefix (reverse proxy) ends up in the link and in the address.
     let p = TestServer::start(&[
         ("FLICKSYNC_ADMIN_TOKEN", ADMIN),
-        ("FLICKSYNC_PUBLIC_URL", "https://flick.example.com/sync"),
+        ("FLICKSYNC_PUBLIC_URL", "https://flick.example.com/services"),
     ])
     .await;
     let (_, pinv) = p
@@ -101,9 +101,9 @@ async fn invite_returns_the_link_and_a_qr_and_is_not_cacheable() {
         pinv["url"]
             .as_str()
             .unwrap()
-            .starts_with("flicksync://flick.example.com/sync/?v=1&tls=1#k=")
+            .starts_with("flickserver://flick.example.com/services/?v=1&tls=1#k=")
     );
-    assert_eq!(pinv["address"], "https://flick.example.com/sync");
+    assert_eq!(pinv["address"], "https://flick.example.com/services");
     assert_eq!(inv["key_source"], "environment");
     assert!(inv["qr"].as_array().unwrap().len() > 20);
 

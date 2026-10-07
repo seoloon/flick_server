@@ -28,10 +28,10 @@ Generate the secrets with `openssl rand -base64 18` and `openssl rand -base64 32
 
 ```bash
 docker compose up -d --build        # flicksync + panel
-docker compose up -d flicksync      # FlickSync only
+docker compose up -d flick-modules      # FlickSync only
 ```
 
-The `panel` service reaches FlickSync at `http://flicksync:8787` on the compose network and reads the same `.env`.
+The `panel` service reaches FlickSync at `http://flick-modules:8787` on the compose network and reads the same `.env`.
 
 ### From a checkout
 

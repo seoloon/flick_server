@@ -12,10 +12,10 @@ cp .env.example .env
 # edit .env: set FLICKSYNC_PUBLIC_URL=https://sync.example.com (your public address)
 docker compose up -d --build
 curl http://localhost:8787/health        # {"status":"ok",...}
-docker compose exec flicksync flicksync invite   # prints the invitation link for Flick
+docker compose exec flick-modules flicksync invite   # prints the invitation link for Flick
 ```
 
-The invitation link is also printed in a banner in the startup logs (`docker compose logs flicksync`).
+The invitation link is also printed in a banner in the startup logs (`docker compose logs flick-modules`).
 
 The repository has a single `Dockerfile` with two targets, `flicksync` (the default) and `panel`; compose builds each
 into its own container. The FlickSync image is multi-stage (Rust build → `distroless/cc` runtime), runs as a non-root user, has no shell or package
@@ -37,13 +37,13 @@ corrupt; it never regenerates a key silently. Set `FLICKSYNC_PUBLIC_URL` so invi
 `ENABLE_WEB_PANEL=true` in `.env`, plus `PANEL_PASSWORD` and `FLICKSYNC_ADMIN_TOKEN`, starts the `panel` service on
 port 3000 (see [../panel/README.md](../panel/README.md)); without it the service exits immediately and nothing is
 published. Put the panel behind your TLS reverse proxy like FlickSync, and forward `X-Forwarded-Proto` and
-`X-Forwarded-For`. Use `docker compose up -d flicksync` to run FlickSync alone and skip building the panel.
+`X-Forwarded-For`. Use `docker compose up -d flick-modules` to run FlickSync alone and skip building the panel.
 
 ### Invitation and key management
 
 | Need | How |
 |---|---|
-| Show the invitation | startup banner in the logs, or `flicksync invite` (`docker compose exec flicksync flicksync invite`) |
+| Show the invitation | startup banner in the logs, or `flicksync invite` (`docker compose exec flick-modules flicksync invite`) |
 | QR code in the terminal | `flicksync invite --qr` |
 | Rotate | `flicksync invite --rotate` adds a key (new kid, same server id), keeps the old one valid and prints the new invitation; **restart** the service so it loads the new key |
 
@@ -102,7 +102,7 @@ Raise `LimitNOFILE` if you expect thousands of simultaneous connections.
 ## One domain for several components (Traefik)
 
 FlickSync is not the only component of a Flick Server, so a single domain can serve them side by side, each under its
-own path prefix, without a second subdomain. The panel keeps the root; FlickSync lives under `/sync` and the proxy strips
+own path prefix, without a second subdomain. The panel keeps the root; FlickSync lives under `/services` and the proxy strips
 the prefix, so FlickSync itself needs no change and no extra hop:
 
 ```yaml
@@ -112,12 +112,12 @@ services:
     ports: !reset []        # Traefik reaches it over the Docker network (Compose 2.24+)
     labels:
       - traefik.enable=true
-      - traefik.http.routers.flicksync.rule=Host(`flick.example.com`) && PathPrefix(`/sync`)
+      - traefik.http.routers.flicksync.rule=Host(`flick.example.com`) && PathPrefix(`/services`)
       - traefik.http.routers.flicksync.entrypoints=websecure
       - traefik.http.routers.flicksync.tls.certresolver=le
       - traefik.http.routers.flicksync.priority=100
       - traefik.http.routers.flicksync.middlewares=flicksync-strip
-      - traefik.http.middlewares.flicksync-strip.stripprefix.prefixes=/sync
+      - traefik.http.middlewares.flicksync-strip.stripprefix.prefixes=/services
       - traefik.http.services.flicksync.loadbalancer.server.port=8787
   panel:
     ports: !reset []
@@ -129,8 +129,8 @@ services:
       - traefik.http.services.panel.loadbalancer.server.port=3000
 ```
 
-Then set `FLICKSYNC_PUBLIC_URL=https://flick.example.com/sync` so the invitation link carries the prefix
-(`flicksync://flick.example.com/sync/?v=1&tls=1#k=...`). Clients append every API path, `ws_path` included, to that
+Then set `FLICKSYNC_PUBLIC_URL=https://flick.example.com/services` so the invitation link carries the prefix
+(`flickserver://flick.example.com/services/?v=1&tls=1#k=...`). Clients append every API path, `ws_path` included, to that
 base. WebSockets pass through Traefik without extra configuration. The `ports: !reset []` lines unpublish the host ports: only Traefik
 reaches the containers. The compose services must also be on a network Traefik shares (add `networks:` as in your
 Traefik setup).

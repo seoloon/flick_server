@@ -2,9 +2,9 @@
 #
 #   cp .env.example .env     # set FLICKSYNC_PUBLIC_URL (https://your.domain)
 #   docker compose up -d --build
-#   docker compose exec flicksync flicksync invite   # the one-link invitation for Flick
+#   docker compose exec flick-modules flicksync invite   # the one-link invitation for Flick
 services:
-  flicksync:
+  flick-modules:
     build:
       context: .
       target: flicksync
@@ -37,9 +37,9 @@ services:
     env_file:
       - .env
     environment:
-      FLICKSYNC_URL: http://flicksync:8787
+      FLICKSYNC_URL: http://flick-modules:8787
     depends_on:
-      - flicksync
+      - flick-modules
     expose:
       - "3000"
     read_only: true

@@ -22,7 +22,7 @@ the user's media server address or credentials.
 ## 1. Configure the FlickSync server
 
 In Flick's settings the user (or the Flick Server admin) gives the FlickSync base URL, e.g.
-`https://sync.example.com`, or `https://flick.example.com/sync` when FlickSync shares a domain with other components
+`https://sync.example.com`, or `https://flick.example.com/services` when FlickSync shares a domain with other components
 behind a reverse proxy. The WebSocket URL is derived from it (`https`→`wss`, `http`→`ws`) plus the `ws_path`
 returned by the API. **Every API path (`/api/v1/...`, `/health`, `ws_path`) is relative to that base URL, path
 prefix included.** Health probe: `GET <base>/health`. In practice the invitation link below carries the base URL.
@@ -77,13 +77,13 @@ Instead of copying the URL and the key separately, the FlickSync operator gives 
 generates it (startup banner, `flicksync invite`); the client parses it. **This section is the normative format.**
 
 ```
-flicksync://<host>[:<port>][/<prefix>]/?v=1&tls=<0|1>#k=<key>
+flickserver://<host>[:<port>][/<prefix>]/?v=1&tls=<0|1>#k=<key>
 ```
 
 | Part | Meaning |
 |---|---|
 | `<host>[:<port>]` | Public address. Host: DNS name, IPv4, or IPv6 in brackets (`[::1]`). Port optional (1-65535). Lower case. |
-| `<prefix>` | Optional path prefix under which a reverse proxy serves FlickSync, e.g. `/sync`: one or more segments of `A-Za-z0-9 - . _ ~`, no empty, `.` or `..` segment. The path always ends with `/` before the `?`. No prefix: the path is just `/`. |
+| `<prefix>` | Optional path prefix under which a reverse proxy serves FlickSync, e.g. `/services`: one or more segments of `A-Za-z0-9 - . _ ~`, no empty, `.` or `..` segment. The path always ends with `/` before the `?`. No prefix: the path is just `/`. |
 | `v` | Format version, an integer. This document describes `1`. A client must reject versions it does not know. |
 | `tls` | `1` = `https://` and `wss://`, `0` = `http://` and `ws://`. Required. |
 | `k` (fragment) | **base64url without padding** (RFC 4648 section 5) of the UTF-8 string `kid:server_id:secret`. |
@@ -91,15 +91,15 @@ flicksync://<host>[:<port>][/<prefix>]/?v=1&tls=<0|1>#k=<key>
 Rules for the client:
 
 * Parse by hand rather than with a generic URL parser (unknown scheme, fragment handling). Split the string after
-  `flicksync://` at the first `#` (fragment) and at the first `?` (query); split query and fragment on `&` into
+  `flickserver://` at the first `#` (fragment) and at the first `?` (query); split query and fragment on `&` into
   `name=value`. **Ignore unknown parameters** (forward compatibility); require `v`, `tls`, `k`.
 * Decode `k`, then split on the first two `:` only (the secret is the rest, as `SigningKey::parse` does).
   `kid` and `server_id`: 1-128 characters of `A-Za-z0-9 - _ . : @`; `secret`: at least 32 characters.
 * API base URL: `http(s)://<host>[:<port>][<prefix>]` (per `tls`, prefix without trailing slash); WebSocket: same
   host and prefix with `ws(s)://`. All API paths, including `ws_path`, are appended to this base.
-  Example: `flicksync://sync.example.com/?v=1&tls=1#k=...` gives `https://sync.example.com` and
+  Example: `flickserver://sync.example.com/?v=1&tls=1#k=...` gives `https://sync.example.com` and
   `wss://sync.example.com/api/v1/rooms/{id}/ws`.
-  With the prefix `/sync`: `https://flick.example.com/sync` and `wss://flick.example.com/sync/api/v1/rooms/{id}/ws`.
+  With the prefix `/services`: `https://flick.example.com/services` and `wss://flick.example.com/services/api/v1/rooms/{id}/ws`.
 * The key is in the **fragment** so it is never sent over HTTP or written to proxy logs. Never log the link or
   the secret; treat the whole link as a secret and store it like a password.
 * Mint tokens exactly as above with `kid` / `server_id` / `secret` from the link. The link is the same for every
@@ -108,7 +108,7 @@ Rules for the client:
 Example (key `main:default:0123456789abcdef0123456789abcdef0123456789abcdef`):
 
 ```
-flicksync://sync.example.com/?v=1&tls=1#k=bWFpbjpkZWZhdWx0OjAxMjM0NTY3ODlhYmNkZWYwMTIzNDU2Nzg5YWJjZGVmMDEyMzQ1Njc4OWFiY2RlZg
+flickserver://sync.example.com/?v=1&tls=1#k=bWFpbjpkZWZhdWx0OjAxMjM0NTY3ODlhYmNkZWYwMTIzNDU2Nzg5YWJjZGVmMDEyMzQ1Njc4OWFiY2RlZg
 ```
 
 Server side: the auto-generated key is `main:default:<48+ random base64url characters>` stored in

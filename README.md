@@ -86,7 +86,7 @@ You need Docker and a domain name pointing to your server.
 ```sh
 cp .env.example .env                 # set FLICKSYNC_PUBLIC_URL=https://your.domain
 docker compose up -d --build
-docker compose exec flicksync flicksync invite
+docker compose exec flick-modules flicksync invite
 ```
 
 The last command prints your invitation link. Paste it into Flick, and you

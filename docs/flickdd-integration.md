@@ -309,7 +309,7 @@ a WorkManager job) often cannot set per-request headers after the task is create
 unreliably. Give them the URL with the token in the query string:
 
 ```
-https://flick.example.com/sync/api/v1/downloads/Qm9v.../file?token=x7Zk...
+https://flick.example.com/services/api/v1/downloads/Qm9v.../file?token=x7Zk...
 ```
 
 The `Range` and `If-Range` headers still do the resuming. When the app also sends `Authorization: Bearer`, the header

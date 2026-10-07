@@ -29,7 +29,7 @@ Operator endpoints used by the [web panel](../panel/README.md). They are **off b
 
 ```json
 {
-  "url": "flicksync://sync.example.com/?v=1&tls=1#k=...",
+  "url": "flickserver://sync.example.com/?v=1&tls=1#k=...",
   "address": "https://sync.example.com",
   "tls": true,
   "address_guessed": false,

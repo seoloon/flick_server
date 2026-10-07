@@ -79,7 +79,7 @@ cp .env.example .env
 # edit .env: at least FLICKSYNC_PUBLIC_URL=https://your.domain
 docker compose up -d --build
 curl localhost:8787/health                      # the server answers
-docker compose exec flicksync flicksync invite  # prints the invitation link
+docker compose exec flick-modules flicksync invite  # prints the invitation link
 ```
 
 `docker-compose.yml` starts two services, `flicksync` and `panel`. The panel
@@ -87,7 +87,7 @@ exits straight away unless `ENABLE_WEB_PANEL=true`, so you can ignore it if you
 do not want it. To start only FlickSync:
 
 ```sh
-docker compose up -d flicksync
+docker compose up -d flick-modules
 ```
 
 The compose file only *exposes* the ports to other containers and to your
@@ -133,16 +133,16 @@ prove it is allowed in. To save you from copying keys around, FlickSync wraps
 everything into one link:
 
 ```
-flicksync://your.domain/?v=1&tls=1#k=...
+flickserver://your.domain/?v=1&tls=1#k=...
 ```
 
 - On first start FlickSync **creates the key itself** and stores it in
   `FLICKSYNC_DATA_DIR` (the `/data` volume in Docker, file `auth_keys`).
 - It prints the link in its logs, and you can show it again any time:
   ```sh
-  docker compose exec flicksync flicksync invite
-  docker compose exec flicksync flicksync invite --qr       # as a QR code
-  docker compose exec flicksync flicksync invite --rotate   # new key (then restart)
+  docker compose exec flick-modules flicksync invite
+  docker compose exec flick-modules flicksync invite --qr       # as a QR code
+  docker compose exec flick-modules flicksync invite --rotate   # new key (then restart)
   ```
 - The link contains the secret. **Share it only with people you trust.**
   Rotating the key cancels every old link.
@@ -196,12 +196,12 @@ domain, for example:
 | Address | Goes to |
 |---|---|
 | `https://flick.example.com/` | the panel |
-| `https://flick.example.com/sync` | FlickSync (the proxy removes `/sync` before forwarding) |
+| `https://flick.example.com/services` | FlickSync (the proxy removes `/services` before forwarding) |
 
-Then set `FLICKSYNC_PUBLIC_URL=https://flick.example.com/sync` so the
+Then set `FLICKSYNC_PUBLIC_URL=https://flick.example.com/services` so the
 invitation link carries the path. A ready Traefik setup is in
 [docs/deployment.md](docs/deployment.md#one-domain-for-several-components-traefik).
-In Dokploy, add two domains on the same host, the second with the `/sync` path
+In Dokploy, add two domains on the same host, the second with the `/services` path
 and *Strip Path* on.
 
 ## 7. Settings

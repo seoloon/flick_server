@@ -10,7 +10,7 @@ Avant : l'utilisateur copiait l'URL du serveur et la clé `kid:server_id:secret`
 Maintenant : il colle **un seul lien**, généré par le serveur :
 
 ```
-flicksync://sync.example.com/?v=1&tls=1#k=bWFpbjpkZWZhdWx0OjAxMjM0NTY3ODlhYmNkZWYwMTIzNDU2Nzg5YWJjZGVmMDEyMzQ1Njc4OWFiY2RlZg
+flickserver://sync.example.com/?v=1&tls=1#k=bWFpbjpkZWZhdWx0OjAxMjM0NTY3ODlhYmNkZWYwMTIzNDU2Nzg5YWJjZGVmMDEyMzQ1Njc4OWFiY2RlZg
 ```
 
 Le client en extrait : l'adresse du serveur, http ou https, et la clé de signature. Le reste du protocole (REST,
@@ -19,14 +19,14 @@ WebSocket, tokens JWT HS256, `aud=flicksync`) **ne change pas**. `/health` et `/
 ## 2. Format (v=1)
 
 ```
-flicksync://<host>[:<port>][/<préfixe>]/?v=1&tls=<0|1>#k=<clé>
+flickserver://<host>[:<port>][/<préfixe>]/?v=1&tls=<0|1>#k=<clé>
 ```
 
 | Élément | Règle |
 |---|---|
 | `<host>` | nom DNS, IPv4, ou IPv6 entre crochets (`[::1]`), en minuscules |
 | `<port>` | optionnel, entier 1 à 65535 |
-| `<préfixe>` | optionnel : chemin sous lequel un reverse proxy sert FlickSync (ex. `/sync`). Un ou plusieurs segments de `A-Za-z0-9 - . _ ~`, sans segment vide, `.` ni `..`. Le chemin se termine toujours par `/` avant le `?`. Sans préfixe, le chemin est simplement `/` |
+| `<préfixe>` | optionnel : chemin sous lequel un reverse proxy sert FlickSync (ex. `/services`). Un ou plusieurs segments de `A-Za-z0-9 - . _ ~`, sans segment vide, `.` ni `..`. Le chemin se termine toujours par `/` avant le `?`. Sans préfixe, le chemin est simplement `/` |
 | `v` | entier, requis. Le client **refuse** toute valeur autre que `1` (message « mettez le client à jour ») |
 | `tls` | requis : `1` = `https`/`wss`, `0` = `http`/`ws`. Autre valeur : invalide |
 | `k` (dans le **fragment**) | base64url **sans padding** (RFC 4648 §5) de la chaîne UTF-8 `kid:server_id:secret` |
@@ -42,15 +42,15 @@ bibliothèques).
 ```rust
 fn parse_invitation(s: &str) -> Result<Invitation, InviteError> {
     let s = s.trim();                                        // tolère espaces/retours à la ligne du copier-coller
-    let rest = s.strip_prefix("flicksync://").ok_or(NotAnInvitation)?;
+    let rest = s.strip_prefix("flickserver://").ok_or(NotAnInvitation)?;
     let (before, fragment) = rest.split_once('#').ok_or(MissingKey)?;
     let (location, query) = before.split_once('?').unwrap_or((before, ""));
     let (authority, raw_path) = match location.find('/') {
-        Some(i) => (&location[..i], &location[i..]),         // "/sync/" ou "/"
+        Some(i) => (&location[..i], &location[i..]),         // "/services/" ou "/"
         None => (location, ""),
     };
     validate_authority(authority)?;                          // host + port optionnel, voir ci-dessus
-    let path = raw_path.trim_end_matches('/');               // "/sync" ou ""
+    let path = raw_path.trim_end_matches('/');               // "/services" ou ""
     validate_path(path)?;                                    // segments non vides, [A-Za-z0-9-._~], ni "." ni ".."
 
     let param = |text: &str, name: &str| text.split('&')
@@ -78,9 +78,9 @@ sans `:`).
 
 Ne pas ajouter de slash final à la base. **Tous les chemins de l'API sont relatifs à cette base, préfixe compris** :
 `/api/v1/...`, `/health`, `/ready`, et aussi le `ws_path` renvoyé par la création de salon (qui est `/api/v1/rooms/{id}/ws`,
-sans le préfixe : le serveur est derrière un proxy qui l'enlève). Exemple avec `flicksync://flick.example.com/sync/?v=1&tls=1#k=...` :
-base `https://flick.example.com/sync`, santé `https://flick.example.com/sync/health`,
-WebSocket `wss://flick.example.com/sync/api/v1/rooms/{id}/ws`.
+sans le préfixe : le serveur est derrière un proxy qui l'enlève). Exemple avec `flickserver://flick.example.com/services/?v=1&tls=1#k=...` :
+base `https://flick.example.com/services`, santé `https://flick.example.com/services/health`,
+WebSocket `wss://flick.example.com/services/api/v1/rooms/{id}/ws`.
 
 ## 4. Jetons
 
@@ -100,7 +100,7 @@ Durée de vie maximale d'un jeton : 24 h par défaut côté serveur, visez 1 h e
 
 1. Écran « Ajouter un serveur de visionnage » : un seul champ « Collez votre lien d'invitation ».
 2. Au collage : parser (section 2). Erreurs, avec message clair par cas :
-   - pas `flicksync://` : « Ce n'est pas un lien d'invitation FlickSync. »
+   - pas `flickserver://` : « Ce n'est pas un lien d'invitation FlickSync. »
    - `v` inconnue : « Ce lien vient d'une version plus récente, mettez Flick à jour. »
    - clé absente ou illisible : « Lien incomplet, recopiez-le en entier. »
 3. Vérifier la connexion avant d'enregistrer : `GET <base>/health`, puis `GET <base>/ready`. Distinguer
@@ -138,7 +138,7 @@ parser à l'identique et reproduire le lien :
 ```
 clé  : main:default:0123456789abcdef0123456789abcdef0123456789abcdef
 hôte : sync.example.com   tls : 1
-lien : flicksync://sync.example.com/?v=1&tls=1#k=bWFpbjpkZWZhdWx0OjAxMjM0NTY3ODlhYmNkZWYwMTIzNDU2Nzg5YWJjZGVmMDEyMzQ1Njc4OWFiY2RlZg
+lien : flickserver://sync.example.com/?v=1&tls=1#k=bWFpbjpkZWZhdWx0OjAxMjM0NTY3ODlhYmNkZWYwMTIzNDU2Nzg5YWJjZGVmMDEyMzQ1Njc4OWFiY2RlZg
 ```
 
 Cas à tester côté client (tous doivent être acceptés ou refusés comme indiqué) :
@@ -146,14 +146,14 @@ Cas à tester côté client (tous doivent être acceptés ou refusés comme indi
 | Entrée | Résultat |
 |---|---|
 | lien ci-dessus entouré d'espaces ou d'un retour à la ligne | accepté |
-| `flicksync://[::1]:8443/?v=1&tls=0#k=<clé valide>` | accepté, hôte `[::1]:8443` |
-| `flicksync://a.example/?v=1&tls=1&futur=x#k=<clé>&autre=1` | accepté (paramètres inconnus ignorés) |
+| `flickserver://[::1]:8443/?v=1&tls=0#k=<clé valide>` | accepté, hôte `[::1]:8443` |
+| `flickserver://a.example/?v=1&tls=1&futur=x#k=<clé>&autre=1` | accepté (paramètres inconnus ignorés) |
 | `https://a.example` | refusé (pas le bon schéma) |
 | sans `#k=` | refusé (clé absente) |
 | `v=2` | refusé (version non supportée) |
 | `tls=2` ou `tls` absent | refusé |
-| `flicksync://flick.example.com/sync/?v=1&tls=1#k=<clé>` | accepté, préfixe `/sync`, base `https://flick.example.com/sync` |
-| `flicksync://a.example/sync?v=1...` (sans slash final) ou préfixe `/a/b/` | accepté (normalisé en `/sync`, `/a/b`) |
+| `flickserver://flick.example.com/services/?v=1&tls=1#k=<clé>` | accepté, préfixe `/services`, base `https://flick.example.com/services` |
+| `flickserver://a.example/services?v=1...` (sans slash final) ou préfixe `/a/b/` | accepté (normalisé en `/services`, `/a/b`) |
 | chemin `/x//y/`, `/../`, `/a b/` | refusé |
 | port `99999` ou `0` | refusé |
 | `k` en base64 invalide, ou décodé sans 3 parties, ou secret de moins de 32 caractères | refusé |

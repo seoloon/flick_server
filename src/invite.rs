@@ -5,7 +5,7 @@
 //!   per line, newest last). It is never silently regenerated.
 //! * An *invitation* packs the public address and that key into one copyable link:
 //!
-//!   `flicksync://<host>[:<port>]/?v=1&tls=<0|1>#k=<base64url(kid:server_id:secret)>`
+//!   `flickserver://<host>[:<port>]/?v=1&tls=<0|1>#k=<base64url(kid:server_id:secret)>`
 //!
 //!   The key sits in the fragment so it never reaches a proxy log. Specified in
 //!   `docs/flick-integration.md`.
@@ -22,7 +22,7 @@ use rand::RngExt;
 use crate::auth::{AuthConfigError, parse_key_entry};
 use crate::config::Config;
 
-pub const SCHEME: &str = "flicksync://";
+pub const SCHEME: &str = "flickserver://";
 pub const INVITE_VERSION: u32 = 1;
 pub const KEY_FILE: &str = "auth_keys";
 const DEFAULT_KID: &str = "main";
@@ -64,13 +64,13 @@ fn io_err(path: &Path) -> impl FnOnce(std::io::Error) -> InviteError + '_ {
 pub struct Endpoint {
     /// `host` or `host:port` (IPv6 hosts in brackets).
     pub authority: String,
-    /// Path prefix when the service sits behind a reverse proxy under one (`/sync`): empty, or
+    /// Path prefix when the service sits behind a reverse proxy under one (`/services`): empty, or
     /// `/seg` or `/seg/seg`, never a trailing slash.
     pub path: String,
     pub tls: bool,
 }
 
-/// Validate and normalise a path prefix: `""`, `"/"` and `"/sync/"` become `""`, `""`, `"/sync"`.
+/// Validate and normalise a path prefix: `""`, `"/"` and `"/services/"` become `""`, `""`, `"/services"`.
 fn normalize_path(raw: &str) -> Result<String, InviteError> {
     let trimmed = raw.trim_end_matches('/');
     if trimmed.is_empty() {
@@ -90,7 +90,7 @@ fn normalize_path(raw: &str) -> Result<String, InviteError> {
         Ok(trimmed.to_owned())
     } else {
         Err(invalid(
-            "invalid path prefix (use letters, digits and - . _ ~ in segments, e.g. /sync)",
+            "invalid path prefix (use letters, digits and - . _ ~ in segments, e.g. /services)",
         ))
     }
 }
@@ -236,7 +236,7 @@ impl FromStr for Invitation {
         let s = s.trim();
         let rest = s
             .strip_prefix(SCHEME)
-            .ok_or_else(|| invalid("not a flicksync:// invitation"))?;
+            .ok_or_else(|| invalid("not a flickserver:// invitation"))?;
         let (before, fragment) = rest
             .split_once('#')
             .ok_or_else(|| invalid("invitation has no key (missing #k=...)"))?;
@@ -429,7 +429,7 @@ pub fn banner(inv: &Invitation, guessed_endpoint: bool, key_file: &Path) -> Stri
     b.push_str("\n\nSECRET: it contains the signing key. Share it only with your invitees.\n");
     b.push_str(&format!("Key file: {}\n", key_file.display()));
     b.push_str(
-        "Show it again with: flicksync invite   (docker compose exec flicksync flicksync invite)\n",
+        "Show it again with: flicksync invite   (docker compose exec flick-modules flicksync invite)\n",
     );
     if guessed_endpoint {
         b.push_str(
@@ -636,7 +636,7 @@ mod tests {
             let key = sample_key();
             let inv = Invitation::new(ep, key.clone()).unwrap();
             let link = inv.to_url();
-            assert!(link.starts_with("flicksync://"));
+            assert!(link.starts_with("flickserver://"));
             assert!(link.contains("/?v=1&tls="));
             assert!(!link.contains(&key), "key is encoded, not literal");
             assert!(!link.contains(char::is_whitespace));
@@ -659,7 +659,7 @@ mod tests {
         .unwrap();
         assert_eq!(
             inv.to_url(),
-            "flicksync://sync.example.com/?v=1&tls=1#k=bWFpbjpkZWZhdWx0OjAxMjM0NTY3ODlhYmNkZWYwMTIzNDU2Nzg5YWJjZGVmMDEyMzQ1Njc4OWFiY2RlZg"
+            "flickserver://sync.example.com/?v=1&tls=1#k=bWFpbjpkZWZhdWx0OjAxMjM0NTY3ODlhYmNkZWYwMTIzNDU2Nzg5YWJjZGVmMDEyMzQ1Njc4OWFiY2RlZg"
         );
     }
 
@@ -676,25 +676,27 @@ mod tests {
         for bad in [
             "".to_owned(),
             "https://a.example".to_owned(),
-            "flicksync://a.example/?v=1&tls=1".to_owned(),
-            format!("flicksync://a.example/?v=2&tls=1#k={enc}"),
-            format!("flicksync://a.example/?tls=1#k={enc}"),
-            format!("flicksync://a.example/?v=1&tls=2#k={enc}"),
-            format!("flicksync://a.example/x//y/?v=1&tls=1#k={enc}"),
-            format!("flicksync://a.example/../?v=1&tls=1#k={enc}"),
-            format!("flicksync://a.example/a b/?v=1&tls=1#k={enc}"),
-            format!("flicksync://a b/?v=1&tls=1#k={enc}"),
-            format!("flicksync://a.example:99999/?v=1&tls=1#k={enc}"),
-            "flicksync://a.example/?v=1&tls=1#k=!!!".to_owned(),
+            "flickserver://a.example/?v=1&tls=1".to_owned(),
+            // the former scheme is no longer accepted, whatever the rest of the link
+            format!("flicksync://a.example/?v=1&tls=1#k={enc}"),
+            format!("flickserver://a.example/?v=2&tls=1#k={enc}"),
+            format!("flickserver://a.example/?tls=1#k={enc}"),
+            format!("flickserver://a.example/?v=1&tls=2#k={enc}"),
+            format!("flickserver://a.example/x//y/?v=1&tls=1#k={enc}"),
+            format!("flickserver://a.example/../?v=1&tls=1#k={enc}"),
+            format!("flickserver://a.example/a b/?v=1&tls=1#k={enc}"),
+            format!("flickserver://a b/?v=1&tls=1#k={enc}"),
+            format!("flickserver://a.example:99999/?v=1&tls=1#k={enc}"),
+            "flickserver://a.example/?v=1&tls=1#k=!!!".to_owned(),
             // key that is valid base64url but not a kid:server_id:secret entry
             format!(
-                "flicksync://a.example/?v=1&tls=1#k={}",
+                "flickserver://a.example/?v=1&tls=1#k={}",
                 URL_SAFE_NO_PAD.encode("short")
             ),
         ] {
             assert!(bad.parse::<Invitation>().is_err(), "{bad}");
         }
-        let err = format!("flicksync://a.example/?v=2&tls=1#k={enc}")
+        let err = format!("flickserver://a.example/?v=2&tls=1#k={enc}")
             .parse::<Invitation>()
             .unwrap_err();
         assert!(matches!(err, InviteError::Unsupported(_)));
@@ -704,14 +706,14 @@ mod tests {
     fn a_path_prefix_round_trips_and_is_normalised() {
         for (url, path, base) in [
             (
-                "https://flick.example.com/sync",
-                "/sync",
-                "https://flick.example.com/sync",
+                "https://flick.example.com/services",
+                "/services",
+                "https://flick.example.com/services",
             ),
             (
-                "https://flick.example.com/sync/",
-                "/sync",
-                "https://flick.example.com/sync",
+                "https://flick.example.com/services/",
+                "/services",
+                "https://flick.example.com/services",
             ),
             (
                 "http://h:8080/a/b-c_d.e~f",
@@ -730,7 +732,7 @@ mod tests {
             let inv = Invitation::new(ep, sample_key()).unwrap();
             let link = inv.to_url();
             assert!(link.starts_with(&format!(
-                "flicksync://{}{}/?v=1&tls=",
+                "flickserver://{}{}/?v=1&tls=",
                 inv.endpoint.authority, path
             )));
             let parsed: Invitation = link.parse().unwrap();
@@ -743,7 +745,7 @@ mod tests {
     fn unknown_parameters_are_ignored_for_forward_compatibility() {
         let key = sample_key();
         let link = format!(
-            "flicksync://a.example/?v=1&tls=0&future=x#k={}&other=1",
+            "flickserver://a.example/?v=1&tls=0&future=x#k={}&other=1",
             URL_SAFE_NO_PAD.encode(&key)
         );
         assert_eq!(link.parse::<Invitation>().unwrap().key, key);
