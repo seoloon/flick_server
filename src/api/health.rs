@@ -14,7 +14,7 @@ pub async fn health() -> Json<serde_json::Value> {
     Json(json!({ "status": "ok", "version": env!("CARGO_PKG_VERSION") }))
 }
 
-/// Readiness: able to authenticate users and accepting new work.
+/// Readiness: the signing keys are loaded.
 pub async fn ready(State(state): State<AppState>) -> Response {
     let ready = state.server().auth.has_keys();
     let (status, body) = if ready {

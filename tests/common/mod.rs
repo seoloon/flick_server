@@ -83,11 +83,12 @@ impl TestServer {
         set("FLICKSYNC_CORS_ORIGINS", "https://app.example");
         set("FLICKSYNC_METRICS_ENABLED", "true");
         set("FLICKSYNC_ENABLED", "true");
+        let dir = flicksync::settings::scratch_dir("server");
+        set("FLICKSYNC_DATA_DIR", dir.to_str().unwrap());
         for (k, v) in extra {
             set(k, v);
         }
         let env: Env = Arc::new(move |k| vars.get(k).cloned());
-        let dir = flicksync::settings::scratch_dir("server");
         let settings = Settings::open(&dir, env).unwrap();
         let state = AppState::new(settings).unwrap();
         std::mem::drop(spawn_sweeper(&state));

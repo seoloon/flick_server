@@ -184,6 +184,73 @@ impl AppState {
             }
         }
     }
+
+    pub fn module_status(&self, id: ModuleId) -> crate::modules::ModuleStatus {
+        let enabled = self.settings.is_enabled(id.scope());
+        let fingerprint = self.settings.fingerprint(id.scope());
+        match id {
+            ModuleId::FlickSync => self.sync_slot.status(id, enabled, fingerprint),
+            ModuleId::FlickDd => self.dd_slot.status(id, enabled, fingerprint),
+        }
+    }
+
+    /// Stop `id` and free its runtime. The caller holds the module's gate.
+    fn stop_locked(&self, id: ModuleId) {
+        match id {
+            ModuleId::FlickSync => {
+                if let SlotState::Running(r) = self.sync_slot.replace(SlotState::Stopped) {
+                    r.rt.manager.shutdown();
+                    info!("FlickSync stopped");
+                }
+            }
+            ModuleId::FlickDd => {
+                if let SlotState::Running(r) = self.dd_slot.replace(SlotState::Stopped) {
+                    let cut = r.rt.shutdown();
+                    info!(streams = cut, "FlickDD stopped");
+                }
+            }
+        }
+    }
+
+    /// Persist "enabled" and start the module.
+    pub fn start_module(
+        &self,
+        id: ModuleId,
+    ) -> Result<crate::modules::ModuleStatus, crate::settings::SettingsError> {
+        self.settings.set_enabled(id.scope(), true)?;
+        let _gate = self.gate(id);
+        self.start_locked(id);
+        Ok(self.module_status(id))
+    }
+
+    /// Persist "disabled" and stop the module.
+    pub fn stop_module(
+        &self,
+        id: ModuleId,
+    ) -> Result<crate::modules::ModuleStatus, crate::settings::SettingsError> {
+        self.settings.set_enabled(id.scope(), false)?;
+        let _gate = self.gate(id);
+        self.stop_locked(id);
+        Ok(self.module_status(id))
+    }
+
+    /// Stop then start with the settings now stored. A disabled module stays stopped.
+    pub fn reload_module(&self, id: ModuleId) -> crate::modules::ModuleStatus {
+        let _gate = self.gate(id);
+        self.stop_locked(id);
+        if self.settings.is_enabled(id.scope()) {
+            self.start_locked(id);
+        }
+        self.module_status(id)
+    }
+
+    /// Process shutdown: close everything, keep the persisted switches as they are.
+    pub fn stop_all(&self) {
+        for id in ModuleId::ALL {
+            let _gate = self.gate(id);
+            self.stop_locked(id);
+        }
+    }
 }
 
 pub fn build_router(state: AppState) -> Router {
@@ -250,13 +317,7 @@ pub async fn serve(state: AppState) -> Result<(), Box<dyn std::error::Error>> {
         info!("shutdown signal received");
         // Close rooms and sockets first, otherwise open WebSockets would hold shutdown up;
         // same for download streams, a throttled file response can last hours.
-        if let Some(sync) = stopping.sync_opt() {
-            sync.manager.shutdown();
-        }
-        if let Some(dd) = stopping.dd() {
-            let cut = dd.shutdown();
-            info!(streams = cut, "FlickDD download streams stopped");
-        }
+        stopping.stop_all();
     });
 
     tokio::select! {
