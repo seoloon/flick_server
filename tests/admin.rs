@@ -451,4 +451,123 @@ mod dd_admin {
         assert!(j["days"].is_array(), "{j}");
         assert!(j["top_titles"].is_array(), "{j}");
     }
+
+    /// Raw request against the live server, to inspect headers.
+    async fn raw(
+        s: &TestServer,
+        m: reqwest::Method,
+        path: &str,
+        tok: Option<&str>,
+    ) -> reqwest::Response {
+        let mut r = reqwest::Client::new().request(m, format!("http://{}{path}", s.addr));
+        if let Some(t) = tok {
+            r = r.bearer_auth(t);
+        }
+        r.send().await.unwrap()
+    }
+
+    fn no_store(r: &reqwest::Response, what: &str) {
+        let h = r
+            .headers()
+            .get("cache-control")
+            .map(|v| v.to_str().unwrap());
+        assert_eq!(h, Some("no-store"), "{what} ({})", r.status());
+    }
+
+    #[tokio::test]
+    async fn every_dd_response_is_no_store_including_errors() {
+        let s = start_dd_admin(MIB, &[]).await;
+        let c = create(&s, "alice").await;
+        for path in ROUTES {
+            let r = raw(&s, reqwest::Method::GET, path, Some(ADMIN)).await;
+            assert_eq!(r.status().as_u16(), 200);
+            no_store(&r, path);
+            let r = raw(&s, reqwest::Method::GET, path, None).await;
+            assert_eq!(r.status().as_u16(), 401);
+            no_store(&r, &format!("{path} 401"));
+        }
+        let missing = raw(
+            &s,
+            reqwest::Method::DELETE,
+            "/admin/v1/dd/nope",
+            Some(ADMIN),
+        )
+        .await;
+        assert_eq!(missing.status().as_u16(), 404);
+        no_store(&missing, "DELETE 404");
+        let del = raw(
+            &s,
+            reqwest::Method::DELETE,
+            &format!("/admin/v1/dd/{}", c.id),
+            Some(ADMIN),
+        )
+        .await;
+        assert_eq!(del.status().as_u16(), 204);
+        no_store(&del, "DELETE 204");
+        let r = raw(&s, reqwest::Method::DELETE, "/admin/v1/dd/x", None).await;
+        assert_eq!(r.status().as_u16(), 401);
+        no_store(&r, "DELETE 401");
+    }
+
+    #[tokio::test]
+    async fn disabled_dd_is_404_with_no_store_even_with_a_valid_admin_token() {
+        let s = start().await;
+        assert!(s.state.dd.is_none());
+        let r = raw(
+            &s,
+            reqwest::Method::GET,
+            "/admin/v1/dd/overview",
+            Some(ADMIN),
+        )
+        .await;
+        assert_eq!(r.status().as_u16(), 404);
+        no_store(&r, "disabled");
+        let j: serde_json::Value = serde_json::from_slice(&r.bytes().await.unwrap()).unwrap();
+        assert_eq!(j["error"]["code"], "DOWNLOAD_NOT_FOUND");
+    }
+
+    #[tokio::test]
+    async fn grant_tokens_never_appear_in_admin_json() {
+        let s = start_dd_admin(MIB, &[]).await;
+        let c = create(&s, "alice").await;
+        let jwt = token_for("alice", SERVER, "k1", SECRET, &["downloads:create"]);
+        let mut paths: Vec<String> = ROUTES.iter().map(|r| (*r).to_owned()).collect();
+        paths.extend(ROUTES.iter().map(|r| format!("{r}?token={}", c.token)));
+        // Live grant, then after it is cancelled (history).
+        for round in 0..2 {
+            for path in &paths {
+                let (st, body) = s.http(Method::GET, path, Some(ADMIN), None).await;
+                assert_eq!(st, StatusCode::OK, "{path}");
+                let text = body.to_string();
+                assert!(!text.contains(&c.token), "{path} leaks the grant token");
+                assert!(!text.contains(&jwt), "{path} leaks the user JWT");
+                assert!(!text.contains("token_hash"), "{path}");
+            }
+            if round == 0 {
+                let (st, _) = s
+                    .http(
+                        Method::DELETE,
+                        &format!("/admin/v1/dd/{}", c.id),
+                        Some(ADMIN),
+                        None,
+                    )
+                    .await;
+                assert_eq!(st, StatusCode::NO_CONTENT);
+            }
+        }
+        let (_, h) = s
+            .http(Method::GET, "/admin/v1/dd/history", Some(ADMIN), None)
+            .await;
+        assert_eq!(h["downloads"][0]["download_id"], c.id.as_str());
+        // The same goes for the error body of a bad cancel.
+        let (_, e) = s
+            .http(
+                Method::DELETE,
+                &format!("/admin/v1/dd/{}?token={}", c.id, c.token),
+                Some(ADMIN),
+                None,
+            )
+            .await;
+        assert!(!e.to_string().contains(&c.token));
+    }
 }

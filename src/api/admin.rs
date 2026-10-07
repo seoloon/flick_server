@@ -254,3 +254,11 @@ pub async fn dd_cancel(
         Err(Error::new(ErrorCode::DownloadNotFound, "download not found").into())
     }
 }
+
+/// Layer applied to every admin route: `Cache-Control: no-store` on all responses,
+/// including 204s and error bodies.
+pub async fn no_store_layer(mut r: Response) -> Response {
+    r.headers_mut()
+        .insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
+    r
+}

@@ -22,10 +22,8 @@ pub fn router(state: AppState) -> Router {
     let cors = cors_layer(&state.cfg.http.allowed_origins);
     let body_limit = state.cfg.http.max_body_bytes;
 
-    let router = Router::new()
-        .route("/health", get(health::health))
-        .route("/ready", get(health::ready))
-        .route("/metrics", get(health::metrics))
+    // Every admin response (success, 204 and errors) is uncacheable.
+    let admin = Router::new()
         .route("/admin/v1/overview", get(admin::overview))
         .route("/admin/v1/invite", get(admin::invite))
         .route("/admin/v1/rooms", get(admin::list_rooms))
@@ -36,6 +34,13 @@ pub fn router(state: AppState) -> Router {
         .route("/admin/v1/dd/history", get(admin::dd_history))
         .route("/admin/v1/dd/stats", get(admin::dd_stats))
         .route("/admin/v1/dd/{id}", delete(admin::dd_cancel))
+        .layer(axum::middleware::map_response(admin::no_store_layer));
+
+    let router = Router::new()
+        .merge(admin)
+        .route("/health", get(health::health))
+        .route("/ready", get(health::ready))
+        .route("/metrics", get(health::metrics))
         .route("/api/v1/rooms", post(rooms::create_room))
         .route("/api/v1/rooms/{room_id}", get(rooms::get_room))
         .route("/api/v1/rooms/{room_id}/join", post(rooms::join_room))
