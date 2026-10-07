@@ -20,6 +20,7 @@ use super::auth::{bearer_token, constant_time_eq};
 use super::error::ApiError;
 use crate::app::AppState;
 use crate::auth::parse_key_entry;
+use crate::dd::{DdState, now_ms as dd_now_ms};
 use crate::errors::{Error, ErrorCode};
 use crate::invite;
 use crate::room::AdminRoomView;
@@ -174,4 +175,82 @@ pub async fn stats(_: AdminAuth, State(state): State<AppState>) -> Response {
             "history": m.history.snapshot(),
         }),
     )
+}
+
+/// The FlickDD state, or 404 when FlickDD is disabled.
+fn dd_state(state: &AppState) -> Result<&std::sync::Arc<DdState>, ApiError> {
+    state
+        .dd
+        .as_ref()
+        .ok_or_else(|| Error::new(ErrorCode::DownloadNotFound, "FlickDD is disabled").into())
+}
+
+/// `GET /admin/v1/dd/overview`: configuration limits and headline numbers.
+pub async fn dd_overview(
+    _: AdminAuth,
+    State(state): State<AppState>,
+) -> Result<Response, ApiError> {
+    let dd = dd_state(&state)?;
+    let c = &dd.cfg;
+    let snap = dd.stats.snapshot(dd_now_ms());
+    Ok(no_store(
+        StatusCode::OK,
+        json!({
+            "enabled": c.enabled,
+            "backends": { "jellyfin": c.jellyfin.is_some(), "plex": c.plex.is_some() },
+            "limits": {
+                "max_parallel": c.max_parallel,
+                "max_global": c.max_global,
+                "rate_bps": c.rate_bps,
+                "chunk_bytes": c.chunk_bytes,
+                "max_range_bytes": c.max_range_bytes,
+                "grant_ttl_secs": c.grant_ttl_ms / 1000,
+            },
+            "active": dd.grants.count(),
+            "totals": snap.totals,
+        }),
+    ))
+}
+
+/// `GET /admin/v1/dd/active`
+pub async fn dd_active(_: AdminAuth, State(state): State<AppState>) -> Result<Response, ApiError> {
+    let dd = dd_state(&state)?;
+    let now = dd_now_ms();
+    Ok(no_store(
+        StatusCode::OK,
+        json!({ "now": now, "downloads": dd.grants.active_views(now) }),
+    ))
+}
+
+/// `GET /admin/v1/dd/history`: recently finished downloads, newest first.
+pub async fn dd_history(_: AdminAuth, State(state): State<AppState>) -> Result<Response, ApiError> {
+    let dd = dd_state(&state)?;
+    Ok(no_store(
+        StatusCode::OK,
+        json!({ "now": dd_now_ms(), "downloads": dd.stats.history() }),
+    ))
+}
+
+/// `GET /admin/v1/dd/stats`
+pub async fn dd_stats(_: AdminAuth, State(state): State<AppState>) -> Result<Response, ApiError> {
+    let dd = dd_state(&state)?;
+    let now = dd_now_ms();
+    let mut body = serde_json::to_value(dd.stats.snapshot(now))
+        .map_err(|e| Error::new(ErrorCode::Internal, e.to_string()))?;
+    body["now"] = json!(now);
+    Ok(no_store(StatusCode::OK, body))
+}
+
+/// `DELETE /admin/v1/dd/{id}`: stop a download and free its slot.
+pub async fn dd_cancel(
+    _: AdminAuth,
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<StatusCode, ApiError> {
+    let dd = dd_state(&state)?;
+    if dd.grants.cancel(&id, true, dd_now_ms()) {
+        Ok(StatusCode::NO_CONTENT)
+    } else {
+        Err(Error::new(ErrorCode::DownloadNotFound, "download not found").into())
+    }
 }

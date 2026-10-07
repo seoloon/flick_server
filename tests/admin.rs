@@ -254,3 +254,201 @@ async fn stats_expose_counters_drift_buckets_and_history() {
     assert_eq!(stats["history_interval_secs"], 10);
     assert!(stats["history"].is_array());
 }
+
+// ---------------------------------------------------------------- FlickDD
+
+mod dd_admin {
+    use std::time::Duration;
+
+    use super::*;
+    use common::fake_media::ITEM;
+    use flicksync::dd::now_ms;
+
+    const MIB: u64 = 1024 * 1024;
+    const ROUTES: [&str; 4] = [
+        "/admin/v1/dd/overview",
+        "/admin/v1/dd/active",
+        "/admin/v1/dd/history",
+        "/admin/v1/dd/stats",
+    ];
+
+    /// FlickDD enabled and an admin token; the fake media server is kept alive by leaking it.
+    async fn start_dd_admin(size: u64, extra: &[(&str, &str)]) -> TestServer {
+        let mut vars = vec![("FLICKSYNC_ADMIN_TOKEN", ADMIN)];
+        vars.extend_from_slice(extra);
+        let (fake, server) = start_dd(size, &vars).await;
+        std::mem::forget(fake);
+        server
+    }
+
+    struct Client {
+        id: String,
+        token: String,
+    }
+
+    async fn create(s: &TestServer, user: &str) -> Client {
+        let jwt = token_for(user, SERVER, "k1", SECRET, &["downloads:create"]);
+        let body = json!({
+            "backend": "jellyfin", "item_id": ITEM, "title": "Movie\u{7}One", "kind": "movie"
+        });
+        let (st, j) = s
+            .http(Method::POST, "/api/v1/downloads", Some(&jwt), Some(body))
+            .await;
+        assert_eq!(st, StatusCode::CREATED, "{j}");
+        Client {
+            id: j["download_id"].as_str().unwrap().to_owned(),
+            token: j["token"].as_str().unwrap().to_owned(),
+        }
+    }
+
+    #[tokio::test]
+    async fn dd_routes_need_the_admin_token() {
+        let s = start_dd_admin(MIB, &[]).await;
+        let mut calls: Vec<(Method, String)> = ROUTES
+            .iter()
+            .map(|r| (Method::GET, (*r).to_owned()))
+            .collect();
+        calls.push((Method::DELETE, "/admin/v1/dd/abc".to_owned()));
+        for (m, path) in &calls {
+            let (st, _) = s.http(m.clone(), path, None, None).await;
+            assert_eq!(st, StatusCode::UNAUTHORIZED, "{path} no token");
+            let (st, _) = s.http(m.clone(), path, Some(&token("alice")), None).await;
+            assert_eq!(st, StatusCode::UNAUTHORIZED, "{path} user token");
+        }
+        for path in ROUTES {
+            let (st, _) = s.http(Method::GET, path, Some(ADMIN), None).await;
+            assert_eq!(st, StatusCode::OK, "{path}");
+        }
+        let (st, j) = s
+            .http(Method::DELETE, "/admin/v1/dd/nope", Some(ADMIN), None)
+            .await;
+        assert_eq!(st, StatusCode::NOT_FOUND);
+        assert_eq!(j["error"]["code"], "DOWNLOAD_NOT_FOUND", "{j}");
+    }
+
+    #[tokio::test]
+    async fn dd_routes_are_404_without_an_admin_token_configured() {
+        let (_fake, s) = start_dd(MIB, &[]).await;
+        for path in ROUTES {
+            let (st, _) = s.http(Method::GET, path, Some(ADMIN), None).await;
+            assert_eq!(st, StatusCode::NOT_FOUND, "{path}");
+        }
+        let (st, _) = s
+            .http(Method::DELETE, "/admin/v1/dd/x", Some(ADMIN), None)
+            .await;
+        assert_eq!(st, StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn dd_routes_are_404_when_flickdd_is_disabled() {
+        let s = start().await;
+        for path in ROUTES {
+            let (st, _) = s.http(Method::GET, path, Some(ADMIN), None).await;
+            assert_eq!(st, StatusCode::NOT_FOUND, "{path}");
+        }
+        let (st, _) = s
+            .http(Method::DELETE, "/admin/v1/dd/x", Some(ADMIN), None)
+            .await;
+        assert_eq!(st, StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn overview_reports_limits_and_backends() {
+        let s = start_dd_admin(MIB, &[]).await;
+        let (st, o) = s
+            .http(Method::GET, "/admin/v1/dd/overview", Some(ADMIN), None)
+            .await;
+        assert_eq!(st, StatusCode::OK);
+        assert_eq!(o["enabled"], true);
+        assert_eq!(o["backends"], json!({"jellyfin": true, "plex": true}));
+        assert_eq!(o["limits"]["max_parallel"], 10);
+        assert_eq!(o["limits"]["max_global"], 100);
+        assert_eq!(o["limits"]["rate_bps"], 10 * MIB);
+        assert_eq!(o["limits"]["chunk_bytes"], 8 * MIB);
+        assert_eq!(o["limits"]["max_range_bytes"], 64 * MIB);
+        assert_eq!(o["limits"]["grant_ttl_secs"], 21_600);
+        assert_eq!(o["active"], 0);
+        assert_eq!(o["totals"]["downloads"], 0);
+        create(&s, "alice").await;
+        let (_, o) = s
+            .http(Method::GET, "/admin/v1/dd/overview", Some(ADMIN), None)
+            .await;
+        assert_eq!(o["active"], 1);
+    }
+
+    #[tokio::test]
+    async fn active_then_cancel_moves_to_history_and_ends_the_stream() {
+        let s = start_dd_admin(16 * MIB, &[("FLICKDD_RATE_MBPS", "1")]).await;
+        let c = create(&s, "alice").await;
+        let mut resp = reqwest::Client::new()
+            .get(format!("http://{}/api/v1/downloads/{}/file", s.addr, c.id))
+            .bearer_auth(&c.token)
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(resp.status().as_u16(), 200);
+        assert!(resp.chunk().await.unwrap().is_some());
+        // Paused from here on: nobody reads, the pump blocks on its channel.
+
+        let dd = s.state.dd.clone().unwrap();
+        eventually("streaming", || {
+            dd.grants.active_views(now_ms()).iter().any(|v| v.streaming)
+        })
+        .await;
+        let (st, a) = s
+            .http(Method::GET, "/admin/v1/dd/active", Some(ADMIN), None)
+            .await;
+        assert_eq!(st, StatusCode::OK);
+        assert!(a["now"].as_u64().unwrap() > 0);
+        assert_eq!(a["downloads"].as_array().unwrap().len(), 1, "{a}");
+        let d = &a["downloads"][0];
+        assert_eq!(d["download_id"], c.id.as_str());
+        assert_eq!(d["user_id"], format!("{SERVER}/alice"));
+        assert_eq!(d["size"], 16 * MIB);
+        assert!(d["covered"].as_u64().is_some(), "{d}");
+        assert_eq!(d["streaming"], true);
+
+        let path = format!("/admin/v1/dd/{}", c.id);
+        let (st, _) = s.http(Method::DELETE, &path, Some(ADMIN), None).await;
+        assert_eq!(st, StatusCode::NO_CONTENT);
+
+        // The client sees the stream end early.
+        let mut got = 0u64;
+        loop {
+            match tokio::time::timeout(Duration::from_secs(10), resp.chunk()).await {
+                Err(_) => panic!("stream still open after the admin cancel"),
+                Ok(Ok(Some(b))) => got += b.len() as u64,
+                Ok(_) => break,
+            }
+        }
+        assert!(got < 16 * MIB, "{got}");
+
+        let (_, a) = s
+            .http(Method::GET, "/admin/v1/dd/active", Some(ADMIN), None)
+            .await;
+        assert_eq!(a["downloads"].as_array().unwrap().len(), 0);
+        let (st, h) = s
+            .http(Method::GET, "/admin/v1/dd/history", Some(ADMIN), None)
+            .await;
+        assert_eq!(st, StatusCode::OK);
+        assert_eq!(h["downloads"][0]["download_id"], c.id.as_str());
+        assert_eq!(h["downloads"][0]["outcome"], "cancelled");
+        assert!(h["now"].as_u64().is_some());
+
+        let (st, _) = s.http(Method::DELETE, &path, Some(ADMIN), None).await;
+        assert_eq!(st, StatusCode::NOT_FOUND, "already cancelled");
+    }
+
+    #[tokio::test]
+    async fn stats_has_totals_days_and_top_titles() {
+        let s = start_dd_admin(MIB, &[]).await;
+        let (st, j) = s
+            .http(Method::GET, "/admin/v1/dd/stats", Some(ADMIN), None)
+            .await;
+        assert_eq!(st, StatusCode::OK);
+        assert!(j["now"].as_u64().is_some());
+        assert!(j["totals"].is_object(), "{j}");
+        assert!(j["days"].is_array(), "{j}");
+        assert!(j["top_titles"].is_array(), "{j}");
+    }
+}
