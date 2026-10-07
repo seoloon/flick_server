@@ -255,8 +255,8 @@ these rules.
 | `5xx` (including `502 BACKEND_UNAVAILABLE`) | Retry (backoff) |
 | `429 RATE_LIMITED` | Retry after `Retry-After` |
 | `429 TOO_MANY_DOWNLOADS` | Wait (backoff); this is queueing, not failing |
-| `429 QUOTA_EXCEEDED`, `401`, `404` (on a token route) | Recreate the grant, resume at the local offset with `If-Range` of the **new** ETag; if the new `size` or `etag` differs from the saved ones, restart the file |
-| `409 SOURCE_CHANGED` | Delete the partial, restart from 0 with a new grant |
+| `429 QUOTA_EXCEEDED`, `401`, `404` (on a token route) | Recreate the grant (counts as a failure: backoff first), resume at the local offset with `If-Range` of the **new** ETag; if the new `size` or `etag` differs from the saved ones, restart the file |
+| `409 SOURCE_CHANGED` | Delete the partial, restart from 0 with a new grant (counts as a failure: backoff first); after 3 in a row without progress, mark the item failed |
 | `416` | Offset is at or past the end: verify and finish |
 | `403` | Stop, do not retry |
 
@@ -266,6 +266,13 @@ consecutive failures. If a `Retry-After` is present, wait at least that long.
 **Give up softly.** After **8 consecutive failures without progress**, stop retrying and mark the item **paused**
 (not failed): the user, a connectivity change or the next app launch restarts it. **Reset the counter on any received
 byte.** A download that crawls forward never gives up.
+
+**Recreating a grant is a failure too.** A recreate after `401`, `404`, `QUOTA_EXCEEDED` or `409` increments the same
+counter and waits the same backoff before the new `create`: an item whose grant dies at once (a file that keeps
+changing, a validator that never matches) must not spin on `POST /api/v1/downloads`. On top of that, after **3
+consecutive `SOURCE_CHANGED` without a received byte** (synthesized ones included, section 4), mark the item
+**failed**: the file is not stable enough to download. Both counters reset on any received byte. The server enforces
+it as well: a user gets at most 30 creation attempts a minute (`429 RATE_LIMITED` with `Retry-After` beyond).
 
 **Wait for connectivity.** When the OS says there is no network, do not burn retries: wait for the reachability
 event (or the Wi-Fi-only condition, section 7), then retry immediately and reset the backoff.
@@ -359,8 +366,9 @@ Checklist:
 - [ ] `Content-Range` and `Content-Length` checked; a short body is a normal short segment.
 - [ ] Errors classified as in section 5; full-jitter backoff 1 s to 60 s; `Retry-After` honoured.
 - [ ] 20 s stall detection; 8 failures without a byte pause the item; connectivity waits.
-- [ ] `401/404/QUOTA_EXCEEDED` recreate the grant; a changed `size` or `etag` restarts the file.
-- [ ] `409 SOURCE_CHANGED` deletes the partial and restarts.
+- [ ] `401/404/QUOTA_EXCEEDED` recreate the grant after a counted failure and its backoff; a changed `size` or `etag`
+      restarts the file.
+- [ ] `409 SOURCE_CHANGED` deletes the partial and restarts after the backoff; 3 in a row without a byte fail the item.
 - [ ] Final size verified, atomic rename, `DELETE` of the grant at the end.
 - [ ] The token never appears in logs.
 
@@ -372,7 +380,8 @@ interface Grant { download_id: string; token: string; url: string; size: number;
 interface Item { id: string; backend: "jellyfin" | "plex"; itemId: string; title?: string; kind?: "movie" | "episode";
                  state: "queued" | "active" | "paused" | "done" | "failed";
                  grant?: Grant; last?: { size: number; etag: string };   // `last`: identity of the previous grant
-                 offset: number; tempPath: string; finalPath: string; fails: number }
+                 offset: number; tempPath: string; finalPath: string;
+                 fails: number; changes: number }                       // both: consecutive, without a received byte
 interface Store { save(i: Item): Promise<void>; load(): Promise<Item[]>; remove(id: string): Promise<void> }
 interface Sink { write(b: Uint8Array): Promise<void>; sync(): Promise<void>; close(): Promise<void> }
 interface Fs { open(path: string, at: number): Promise<Sink>;   // creates, truncates to `at`, positions there
@@ -389,10 +398,11 @@ const backoff = (n: number) => Math.random() * Math.min(60_000, 1000 * 2 ** n);
 class DownloadManager {
   private running = new Map<string, AbortController>();
   constructor(private base: string, private jwt: () => Promise<string>, private store: Store, private fs: Fs,
-              private net: Net, private items: Item[] = [], private maxActive = 10, private giveUp = 8) {}
+              private net: Net, private items: Item[] = [], private maxActive = 10, private giveUp = 8,
+              private maxChanges = 3) {}
   async start() { this.items = await this.store.load(); this.pump(); }
   enqueue(i: Item) { this.items.push(i); this.pump(); }
-  resume(id: string) { const i = this.items.find(x => x.id === id); if (i?.state === "paused") { i.state = "queued"; i.fails = 0; this.pump(); } }
+  resume(id: string) { const i = this.items.find(x => x.id === id); if (i?.state === "paused") { i.state = "queued"; i.fails = 0; i.changes = 0; this.pump(); } }
   async cancel(id: string) { this.running.get(id)?.abort(); const i = this.items.find(x => x.id === id); if (!i) return;
     await this.release(i); await this.fs.remove(i.tempPath).catch(() => {}); this.items = this.items.filter(x => x !== i); await this.store.remove(id); }
   private pump() { for (const i of this.items) { if (this.running.size >= this.maxActive) return;
@@ -430,7 +440,7 @@ class DownloadManager {
       const want = Number(r.headers.get("content-length")), sink = await this.fs.open(i.tempPath, i.offset), rd = r.body!.getReader();
       let got = 0;
       try { for (;;) { const { done, value } = await rd.read(); arm(); if (done) break;
-        await sink.write(value); i.offset += value.length; got += value.length; i.fails = 0; await this.store.save(i); }   // write, then save
+        await sink.write(value); i.offset += value.length; got += value.length; i.fails = i.changes = 0; await this.store.save(i); }   // write, then save
         await sink.sync(); } finally { await sink.close(); }
       if (got < want) throw new Error("body cut short");                                    // normal: loop resumes at i.offset
     } finally { clearTimeout(timer); outer.removeEventListener("abort", onAbort); }
@@ -439,10 +449,11 @@ class DownloadManager {
     const s = e instanceof HttpError ? e.status : 0, code = e?.code;
     if (code === "TOO_MANY_DOWNLOADS") { await sleep(backoff(Math.min(i.fails + 3, 6))); return; }       // queueing: not a failure
     if (s === 403 || s === 400 || (s === 404 && !i.grant)) { i.state = "failed"; return; }               // 404 on create: item gone / FlickDD off
-    if (s === 409) { await this.fs.remove(i.tempPath).catch(() => {}); i.offset = 0; i.grant = undefined; i.last = undefined; return; }
-    if (s === 401 || s === 404 || code === "QUOTA_EXCEEDED") { if (i.grant) { i.grant = undefined; return; } }  // recreate; create() compares size/etag
-    if (s === 416) { if (i.grant && i.offset >= i.grant.size) return; i.grant = undefined; return; }
-    if (++i.fails >= this.giveUp) { i.state = "paused"; await this.release(i); return; }              // soft give-up
+    if (s === 409) { await this.fs.remove(i.tempPath).catch(() => {}); i.offset = 0; i.grant = undefined; i.last = undefined;
+      if (++i.changes >= this.maxChanges) { i.state = "failed"; return; } }                              // never stable: stop
+    if (s === 401 || s === 404 || code === "QUOTA_EXCEEDED") i.grant = undefined;                      // recreate; create() compares size/etag
+    if (s === 416) { if (i.grant && i.offset >= i.grant.size) return; i.grant = undefined; }           // at the end: finish()
+    if (++i.fails >= this.giveUp) { i.state = "paused"; await this.release(i); return; }              // soft give-up; recreates count too
     await this.net.online(); await sleep(Math.max(backoff(i.fails), (e.retryAfter ?? 0) * 1000));
   }
   private async finish(i: Item) {
@@ -457,7 +468,9 @@ class DownloadManager {
 ```
 
 Notes on the reference: `create()` keeps the previous grant's `{size, etag}` in `last` so that a recreate after
-`401/404` compares the new file identity with the old one, as section 5 requires. `finish()` and `release()` both
+`401/404` compares the new file identity with the old one, as section 5 requires. Every path that drops the grant
+to recreate it goes through the counted failure and its backoff (`onError` falls through to `++i.fails`), so a broken
+item never loops on `create`; `changes` fails the item after 3 `SOURCE_CHANGED` in a row without a received byte. `finish()` and `release()` both
 tolerate a grant the server already completed (`404` is ignored). Persist each `Item` with your `Store` (the token
 inside `grant` included, in app-private storage); on `start()`, items found in state `active` are simply re-run by
 `pump()`, and a stale saved grant is recovered by the `401/404` rule.
