@@ -109,6 +109,16 @@ fn authorized(headers: &HeaderMap, name: &str, secret: &str) -> bool {
     headers.get(name).and_then(|v| v.to_str().ok()) == Some(secret)
 }
 
+/// Like recent Jellyfin releases: only `Authorization: MediaBrowser Token="<key>"` counts,
+/// the legacy `X-Emby-Token` header is refused.
+fn jf_authorized(headers: &HeaderMap, key: &str) -> bool {
+    authorized(
+        headers,
+        "authorization",
+        &format!("MediaBrowser Token=\"{key}\""),
+    )
+}
+
 async fn first_byte_delay(k: &FakeKnobs) {
     let ms = k.delay_first_byte_ms.load(Ordering::SeqCst);
     if ms > 0 {
@@ -123,7 +133,7 @@ async fn jf_items(
 ) -> Response {
     k.metadata_requests.fetch_add(1, Ordering::SeqCst);
     first_byte_delay(&k).await;
-    if !authorized(&headers, "x-emby-token", JF_KEY) {
+    if !jf_authorized(&headers, JF_KEY) {
         return StatusCode::UNAUTHORIZED.into_response();
     }
     let size = k.size.load(Ordering::SeqCst);
@@ -149,7 +159,7 @@ async fn jf_items(
 
 async fn jf_download(State(k): Knobs, headers: HeaderMap, Path(id): Path<String>) -> Response {
     first_byte_delay(&k).await;
-    if !authorized(&headers, "x-emby-token", JF_KEY) {
+    if !jf_authorized(&headers, JF_KEY) {
         return StatusCode::UNAUTHORIZED.into_response();
     }
     if id != ITEM {

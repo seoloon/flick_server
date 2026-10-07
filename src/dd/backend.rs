@@ -246,7 +246,11 @@ impl Backends {
     fn get(&self, kind: BackendKind, cfg: &BackendConfig, path_and_query: &str) -> RequestBuilder {
         let rb = self.client.get(format!("{}{path_and_query}", cfg.url));
         match kind {
-            BackendKind::Jellyfin => rb.header("X-Emby-Token", &cfg.secret),
+            // The legacy `X-Emby-Token` header is refused (401) by recent Jellyfin releases.
+            BackendKind::Jellyfin => rb.header(
+                "Authorization",
+                format!("MediaBrowser Token=\"{}\"", cfg.secret),
+            ),
             BackendKind::Plex => rb
                 .header("X-Plex-Token", &cfg.secret)
                 .header("Accept", "application/json"),
@@ -505,6 +509,27 @@ mod tests {
             assert_eq!(url.port(), Some(32400), "{key}");
             assert_eq!(url.username(), "", "{key}");
         }
+    }
+
+    #[test]
+    fn jellyfin_key_travels_in_the_authorization_header() {
+        // Recent Jellyfin releases reject the legacy `X-Emby-Token` header (401) but accept
+        // `Authorization: MediaBrowser Token="..."`.
+        let cfg = BackendConfig {
+            url: "http://jf.local:8096".into(),
+            secret: "abc123".into(),
+        };
+        let b = Backends::new(&DdConfig::from_lookup(&|_| None).unwrap());
+        let req = b
+            .get(BackendKind::Jellyfin, &cfg, "/Items")
+            .build()
+            .unwrap();
+        assert_eq!(
+            req.headers().get("authorization").unwrap(),
+            "MediaBrowser Token=\"abc123\""
+        );
+        assert!(req.headers().get("x-emby-token").is_none());
+        assert!(!req.url().as_str().contains("abc123"));
     }
 
     #[tokio::test]
