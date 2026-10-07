@@ -3,6 +3,8 @@
 The web panel for Flick Server: one sidebar entry per component, **FlickSync** first. Next.js (App Router),
 no database, no extra runtime dependency, styled with the Flick design system (tokens, glass, pills, Inter).
 
+FlickDD page (once FlickDD is enabled on the server, see `FLICKDD_*` in `.env.example`): downloads in progress with a stop button, recent downloads, bytes per day, top titles and the limits in force.
+
 FlickSync page: copy the invitation link (masked until revealed, QR code on demand), list live rooms and close frozen
 ones, see rooms, participants, latency, traffic, sync corrections and the distribution of measured drift.
 

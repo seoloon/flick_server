@@ -48,6 +48,12 @@ Turn on the optional panel to copy the invitation, see the live rooms, close
 a stuck one and watch sync statistics, in the same design as Flick. Off by
 default: when disabled, nothing listens.
 
+### 📥 Downloads for offline viewing (optional)
+Turn on **FlickDD** and the Flick app can save a film or an episode from your
+Jellyfin or Plex to watch offline. Downloads **resume** after any interruption,
+each one is speed-limited so nobody hogs your connection, and the panel shows
+what is downloading right now. Off by default.
+
 ### 💬 Chat in the room
 Short messages next to the film, with history for people who join late and
 limits that keep the room calm.
@@ -65,7 +71,9 @@ Redis, nothing to maintain**. A small VPS or a Raspberry Pi is plenty.
 ## Private by design
 
 - **No telemetry.** Flick Server talks to your Flick clients and nobody else.
-- **No media passes through it.** Only room state and a reference to the title.
+- **No media passes through it for Watch Together.** Only room state and a
+  reference to the title. (If you turn on FlickDD, downloaded files do travel
+  through the server on their way from your Jellyfin or Plex.)
 - **Nothing is stored.** Rooms live in memory and vanish on restart. The only
   file written is the signing key.
 - **Short-lived signed tokens.** Access is checked on every request.
@@ -103,6 +111,8 @@ Using Dokploy, Coolify, a reverse proxy or no Docker at all? See
   in progress, and friends simply create a new one.
 - **Everyone needs access to the title.** Flick Server does not stream
   anything: each person plays it from their own Jellyfin or Plex.
+- **Downloads use your bandwidth.** With FlickDD on, size your upload speed for
+  the downloads you allow (see [TECHNICAL.md](TECHNICAL.md#9-flickdd-downloads)).
 
 ## Documentation
 

@@ -388,6 +388,14 @@ Malformed input never terminates a connection by itself: it produces an `error` 
 | `RATE_LIMITED` | 429 | Rate limit hit. |
 | `TOO_MANY_ROOMS` | 429 | Instance room cap reached. |
 | `CHAT_DISABLED` | 403 | Chat is off in this room. |
+| `DOWNLOAD_NOT_FOUND` | 404 | FlickDD: unknown, expired, finished or cancelled download, wrong download token, unknown item, or FlickDD is disabled. |
+| `TOO_MANY_DOWNLOADS` | 429 | FlickDD: the user (10) or the server (100) has reached its download limit. Retry later. |
+| `QUOTA_EXCEEDED` | 429 | FlickDD: the download already served its allowance (`size x FLICKDD_MAX_OVERSERVE`). Create a new one. |
+| `SOURCE_CHANGED` | 409 | FlickDD: the file changed on the media server since the download was created. Start over. |
+| `RANGE_NOT_SATISFIABLE` | 416 | FlickDD: the requested byte range is outside the file, reversed, or has several parts. |
+| `BACKEND_UNAVAILABLE` | 502 / 503 | FlickDD: Jellyfin / Plex failed or did not answer (502), or that backend is not configured (503). |
+
+The FlickDD codes only occur on the download routes (plain HTTP, never on the WebSocket); see [flickdd-integration.md](flickdd-integration.md).
 | `TOO_MANY_CONNECTIONS` | 503 | Instance connection cap reached / shutting down. |
 | `INTERNAL` | 500 | Unexpected server condition (details are only in the server logs). |
 

@@ -12,26 +12,29 @@ explained in plain words. Looking for the pitch? See the [README](README.md).
 6. [Putting it on the internet](#6-putting-it-on-the-internet)
 7. [Settings](#7-settings)
 8. [How synchronization works](#8-how-synchronization-works)
-9. [Security](#9-security)
-10. [Monitoring and operations](#10-monitoring-and-operations)
-11. [Development](#11-development)
-12. [Where to read more](#12-where-to-read-more)
+9. [FlickDD downloads](#9-flickdd-downloads)
+10. [Security](#10-security)
+11. [Monitoring and operations](#11-monitoring-and-operations)
+12. [Development](#12-development)
+13. [Where to read more](#13-where-to-read-more)
 
 ---
 
 ## 1. What it is
 
-Flick Server is made of two parts:
+Flick Server is made of three parts:
 
 | Part | What it does | Always on? |
 |---|---|---|
 | **FlickSync** | The Watch Together service. Keeps track of rooms and keeps everyone's playback in sync. | Yes |
-| **Web panel** | A website for the person running the server: invitation, live rooms, statistics. | Optional |
+| **FlickDD** | Resumable, speed-limited downloads of movies and episodes from your Jellyfin or Plex, for offline viewing in Flick. | Optional (`FLICKDD_ENABLED`) |
+| **Web panel** | A website for the person running the server: invitation, live rooms, downloads, statistics. | Optional |
 
 FlickSync is **not** a media server. It never sees a video file and never talks
 to Jellyfin or Plex. It only knows a *reference* to the title being watched
 (think "episode 3 of that show"). Each Flick app then opens that title from its
-own server.
+own server. **FlickDD is different**: it is the one part that does carry media
+files (see [section 9](#9-flickdd-downloads)).
 
 ## 2. The big picture
 
@@ -56,6 +59,11 @@ Two kinds of conversation happen:
   pause, seek, who just joined, chat, sync corrections.
 
 Messages are small JSON texts. The full list is in [docs/protocol.md](docs/protocol.md).
+
+The diagram shows FlickSync, which only moves small messages. **FlickDD does
+touch media bytes**: when the Flick app downloads a film, the file travels from
+Jellyfin or Plex *through* Flick Server to the app. FlickSync and FlickDD share
+the process and the signing key, but nothing else.
 
 **No database.** Rooms exist only in the memory of the running process. That
 keeps Flick Server simple and fast, and it means a restart ends the rooms in
@@ -153,7 +161,9 @@ A website for you, the person running the server. It shows:
 
 - the **invitation link** (hidden until you reveal it, with a copy button and a QR code),
 - the **live rooms**, with a button to close frozen ones,
-- **statistics**: rooms, participants, latency, traffic, sync corrections and how far apart people drift.
+- **statistics**: rooms, participants, latency, traffic, sync corrections and how far apart people drift,
+- a **FlickDD page**: downloads in progress (with a button to stop one), recent downloads, bytes per day,
+  most downloaded titles and the limits in force.
 
 To turn it on, add this to `.env` and redeploy:
 
@@ -215,6 +225,14 @@ are the ones that matter most.
 | `FLICKSYNC_CHAT_ENABLED` | `true` | Chat on or off. |
 | `FLICKSYNC_CORS_ORIGINS` | empty | Websites allowed to talk to the server from a browser. The Flick app does not need this. |
 | `FLICKSYNC_METRICS_ENABLED` | `false` | Exposes `/metrics` for monitoring. |
+| `FLICKDD_ENABLED` | `false` | Turns FlickDD (downloads) on. Needs a backend below. |
+| `FLICKDD_JELLYFIN_URL`, `FLICKDD_JELLYFIN_API_KEY` | unset | Your Jellyfin address and an API key. Both or neither. |
+| `FLICKDD_PLEX_URL`, `FLICKDD_PLEX_TOKEN` | unset | Your Plex address and token. Both or neither. |
+| `FLICKDD_MAX_PARALLEL` | `10` | Downloads in progress per person. |
+| `FLICKDD_MAX_GLOBAL` | `100` | Downloads in progress on the whole server. |
+| `FLICKDD_RATE_MBPS` | `10` | Speed cap per download, in MiB/s. |
+| `FLICKDD_CHUNK_MB` | `8` | Segment size the app is told to ask for. |
+| `FLICKDD_GRANT_TTL`, `FLICKDD_GRANT_MAX_AGE` | 6 h, 24 h | Idle lifetime and absolute lifetime of a download (given in seconds). |
 
 Timers worth knowing:
 
@@ -250,7 +268,70 @@ The goal: everyone sees the same frame at the same time, without jerky jumps.
 The logic is deliberately kept "pure": it takes the current time as an input
 instead of reading a clock, so it can be tested without waiting.
 
-## 9. Security
+## 9. FlickDD downloads
+
+FlickDD lets the Flick app save a movie or an episode on the phone to watch it
+offline. Flick Server does not store anything: it fetches the file from your
+Jellyfin or Plex while the app downloads it, and slows each download down so one
+person cannot take the whole connection.
+
+**The flow.**
+
+1. The app asks `POST /api/v1/downloads` for a **grant** (its token needs the
+   `downloads:create` permission). Flick Server looks the file up on Jellyfin or
+   Plex and replies with its size, name, a validator (ETag) and a private
+   **download token** for this one download.
+2. The app reads the file in segments (`Range` requests of `chunk_bytes`, 8 MB by
+   default) with the download token. Each segment is fetched from Jellyfin or Plex
+   on the spot and sent at no more than 10 MB/s.
+3. When every byte has been served, the grant completes and its slot is freed.
+   The app can cancel any time (`DELETE`). Idle grants expire after 6 hours, and
+   no grant lives longer than 24 hours.
+
+**Resuming is the point.** If the connection drops, the app asks again from
+where it stopped, with `If-Range` set to the ETag. If the file changed on the
+media server in between, the server says so (`409 SOURCE_CHANGED`) and the app
+starts over. The app keeps its progress on disk, so even a killed app resumes.
+The full client algorithm is in [docs/flickdd-integration.md](docs/flickdd-integration.md).
+
+**Limits.**
+
+| Limit | Default | What happens beyond it |
+|---|---|---|
+| Downloads in progress per person | 10 | `429 TOO_MANY_DOWNLOADS`: the app waits |
+| Downloads in progress on the server | 100 | same |
+| Speed per download | 10 MB/s | the response is slowed down |
+| File requests per minute on one download | 120 | `429 RATE_LIMITED` with `Retry-After` |
+| Bytes one download may serve | 2 x the file size | the download ends (`QUOTA_EXCEEDED`, then `404`); the app creates a new one |
+| One ranged answer | 64 MB | the answer is shorter, the app continues |
+| A client too slow to read | 30 s | the response is cut, the app resumes |
+
+**Guard rails against unstable networks.** The server cuts a slow or stuck
+client instead of buffering for it, retries Jellyfin or Plex twice by itself
+before cutting a response, and lets a new request on a download replace the older
+one (so a client that is unsure whether its last connection is dead can simply
+ask again). The client side (backoff with jitter, stall detection, giving up
+softly after 8 failures, waiting for connectivity) is described in the
+integration guide.
+
+**Sizing the bandwidth.** The bytes pass through Flick Server, so its network
+must carry them. The worst case is **parallel downloads x 10 MB/s**: ten
+downloads at full speed already mean 100 MB/s (800 Mbit/s), more than many
+uplinks. Pick `FLICKDD_RATE_MBPS` and `FLICKDD_MAX_GLOBAL` so that
+`MAX_GLOBAL x RATE_MBPS x 8` (in Mbit/s) stays under your upload speed, with some
+margin. Jellyfin or Plex should sit next to Flick Server (same machine or LAN):
+the upstream leg is not throttled.
+
+**Secrets.** The Jellyfin API key and Plex token live only in the environment.
+They are never sent to a client, never logged, and an error from the media server
+reaches the app only as a generic "the media backend is unavailable" (the detail
+stays in the server logs). The download token is stored as a hash, and neither it
+nor the `?token=` query string is logged.
+
+**Watching it.** The panel's FlickDD page, the
+[admin API](docs/admin-api.md#flickdd) and the `flickdd_*` series on `/metrics`.
+
+## 10. Security
 
 - **Signed tokens.** Every request carries a short-lived token (HS256 JWT)
   signed with the server key. Tokens are checked for signature, audience,
@@ -268,14 +349,17 @@ instead of reading a clock, so it can be tested without waiting.
 - **The panel** needs a password and uses a signed `HttpOnly` session cookie.
   The admin token stays on the panel's server side and never reaches the browser.
 - **Treat the invitation link like a password.**
+- **Download tokens** are random, valid for one download only, hashed in memory,
+  and die with the download. A wrong token and an unknown download give the same
+  answer, so nothing can be probed. Media server keys never leave the server.
 
-## 10. Monitoring and operations
+## 11. Monitoring and operations
 
 | Address | Purpose |
 |---|---|
 | `/health` | Is the process alive? |
 | `/ready` | Is it ready to take traffic? |
-| `/metrics` | Prometheus statistics. Off by default. Set `FLICKSYNC_METRICS_ENABLED=true`, and optionally `FLICKSYNC_METRICS_TOKEN` to require a bearer token. |
+| `/metrics` | Prometheus statistics (FlickDD's `flickdd_*` series too, when it is on). Off by default. Set `FLICKSYNC_METRICS_ENABLED=true`, and optionally `FLICKSYNC_METRICS_TOKEN` to require a bearer token. |
 
 - **Logs** go to the console. Use `FLICKSYNC_LOG_FORMAT=json` for log tools.
 - **Docker health checks** are built in. The image has no `curl`, so the
@@ -285,7 +369,7 @@ instead of reading a clock, so it can be tested without waiting.
 - **Backups:** only the `/data` volume matters, as it holds the signing key.
   Without it, issued invitation links stop working.
 
-## 11. Development
+## 12. Development
 
 ```sh
 cargo fmt --check
@@ -304,11 +388,16 @@ TOKEN=$(cargo run -q --example mint_token -- main <secret> my-flick alice Alice)
 curl -s -X POST localhost:8787/api/v1/rooms -H "Authorization: Bearer $TOKEN"
 ```
 
+For FlickDD, add the token lifetime (seconds) and the permission list as the last
+two arguments: `... alice Alice 3600 downloads:create`. See
+[the integration guide](docs/flickdd-integration.md#11-testing-against-a-real-server).
+
 ### Layout
 
 ```
 src/
-  api/         web requests: rooms, health, admin
+  api/         web requests: rooms, downloads, health, admin
+  dd/          FlickDD: download grants, throttling, Jellyfin/Plex access, statistics
   websocket/   the live connection
   protocol/    message formats and validation
   room/        the room: who is in, who may do what
@@ -324,13 +413,14 @@ docs/          deeper references
 The rules of a room and the sync maths are kept apart from networking, so they
 are easy to test and reason about.
 
-## 12. Where to read more
+## 13. Where to read more
 
 | Document | For |
 |---|---|
 | [docs/protocol.md](docs/protocol.md) | Every message, payload and error. For client developers. |
 | [docs/flick-integration.md](docs/flick-integration.md) | What the Flick app and server must do; tokens and key rotation. |
 | [docs/client-invitation.md](docs/client-invitation.md) | The invitation link format. |
+| [docs/flickdd-integration.md](docs/flickdd-integration.md) | FlickDD: the download API and how the client must use it (resume, retries, queueing). |
 | [docs/deployment.md](docs/deployment.md) | Docker, Dokploy, Coolify, bare metal, proxy setups. |
 | [docs/admin-api.md](docs/admin-api.md) | The operator API behind the panel. |
 | [docs/architecture.md](docs/architecture.md) | Design choices and risks. |

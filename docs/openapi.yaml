@@ -11,6 +11,7 @@ servers:
 tags:
   - name: ops
   - name: rooms
+  - name: downloads
 paths:
   /health:
     get:
@@ -121,9 +122,89 @@ paths:
         "409": { $ref: "#/components/responses/Error" }
         "410": { $ref: "#/components/responses/Error" }
         "503": { $ref: "#/components/responses/Error" }
+  /api/v1/downloads:
+    post:
+      tags: [downloads]
+      summary: FlickDD, create a download grant
+      description: |
+        Requires the `downloads:create` permission. Every FlickDD route answers `404 DOWNLOAD_NOT_FOUND`
+        while FlickDD is disabled (FLICKDD_ENABLED=false). Guide: `flickdd-integration.md`.
+      security: [{ bearer: [] }]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: "#/components/schemas/CreateDownload" } } }
+      responses:
+        "201":
+          description: Grant created. The token is shown once.
+          content: { application/json: { schema: { $ref: "#/components/schemas/DownloadGrant" } } }
+        "400": { description: "INVALID_PAYLOAD (bad body or item_id, or an empty file)", content: { application/json: { schema: { $ref: "#/components/schemas/ErrorBody" } } } }
+        "401": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
+        "404": { description: "DOWNLOAD_NOT_FOUND (unknown item, or FlickDD disabled)", content: { application/json: { schema: { $ref: "#/components/schemas/ErrorBody" } } } }
+        "429": { description: "TOO_MANY_DOWNLOADS (10 per user, 100 per server)", content: { application/json: { schema: { $ref: "#/components/schemas/ErrorBody" } } } }
+        "502": { description: "BACKEND_UNAVAILABLE (generic message; detail is in the server logs)", content: { application/json: { schema: { $ref: "#/components/schemas/ErrorBody" } } } }
+        "503": { description: "BACKEND_UNAVAILABLE (this backend is not configured)", content: { application/json: { schema: { $ref: "#/components/schemas/ErrorBody" } } } }
+  /api/v1/downloads/{id}:
+    parameters: [{ $ref: "#/components/parameters/DownloadId" }, { $ref: "#/components/parameters/DownloadTokenQuery" }]
+    get:
+      tags: [downloads]
+      summary: FlickDD, status of a grant
+      security: [{ downloadToken: [] }]
+      responses:
+        "200":
+          description: Status
+          content: { application/json: { schema: { $ref: "#/components/schemas/DownloadStatus" } } }
+        "401": { description: No download token sent, content: { application/json: { schema: { $ref: "#/components/schemas/ErrorBody" } } } }
+        "404": { description: "Unknown, expired, finished or cancelled grant, or wrong token (indistinguishable)", content: { application/json: { schema: { $ref: "#/components/schemas/ErrorBody" } } } }
+    delete:
+      tags: [downloads]
+      summary: FlickDD, cancel a grant and free its slot
+      security: [{ downloadToken: [] }]
+      responses:
+        "204": { description: Cancelled }
+        "401": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+  /api/v1/downloads/{id}/file:
+    parameters: [{ $ref: "#/components/parameters/DownloadId" }, { $ref: "#/components/parameters/DownloadTokenQuery" }]
+    get:
+      tags: [downloads]
+      summary: FlickDD, the file bytes (also answers HEAD)
+      description: |
+        Throttled to 10 MiB/s per download by default. A valid `Range` is clamped to the file and truncated to
+        `max_range_bytes`; `If-Range` must equal the grant ETag or the whole file is served with `200`. A new
+        request on a grant preempts its running stream. A body shorter than `Content-Length` is normal: resume.
+      security: [{ downloadToken: [] }]
+      parameters:
+        - { name: Range, in: header, required: false, schema: { type: string, example: "bytes=0-8388607" } }
+        - { name: If-Range, in: header, required: false, schema: { type: string }, description: The ETag from the create response }
+      responses:
+        "200":
+          description: Whole file (no Range, or If-Range did not match)
+          headers: { Content-Length: { $ref: "#/components/headers/ContentLength" }, Content-Range: { $ref: "#/components/headers/ContentRange" }, Accept-Ranges: { $ref: "#/components/headers/AcceptRanges" }, ETag: { $ref: "#/components/headers/ETag" } }
+          content: { application/octet-stream: { schema: { type: string, format: binary } } }
+        "206":
+          description: Requested range
+          headers: { Content-Length: { $ref: "#/components/headers/ContentLength" }, Content-Range: { $ref: "#/components/headers/ContentRange" }, Accept-Ranges: { $ref: "#/components/headers/AcceptRanges" }, ETag: { $ref: "#/components/headers/ETag" } }
+          content: { application/octet-stream: { schema: { type: string, format: binary } } }
+        "401": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+        "409": { description: SOURCE_CHANGED (the file changed on the media server), content: { application/json: { schema: { $ref: "#/components/schemas/ErrorBody" } } } }
+        "416":
+          description: RANGE_NOT_SATISFIABLE
+          headers:
+            Content-Range: { schema: { type: string, example: "bytes */4831838208" } }
+          content: { application/json: { schema: { $ref: "#/components/schemas/ErrorBody" } } }
+        "429":
+          description: RATE_LIMITED (120 requests per minute per grant, with Retry-After) or QUOTA_EXCEEDED
+          headers:
+            Retry-After: { schema: { type: integer }, description: Seconds, only for RATE_LIMITED }
+          content: { application/json: { schema: { $ref: "#/components/schemas/ErrorBody" } } }
+        "502": { description: BACKEND_UNAVAILABLE, content: { application/json: { schema: { $ref: "#/components/schemas/ErrorBody" } } } }
+        "503": { description: BACKEND_UNAVAILABLE (backend not configured), content: { application/json: { schema: { $ref: "#/components/schemas/ErrorBody" } } } }
 components:
   securitySchemes:
     bearer: { type: http, scheme: bearer, bearerFormat: JWT }
+    downloadToken: { type: http, scheme: bearer, description: "Download token of a grant (Authorization: Bearer, or ?token=; the header wins)" }
     metricsToken: { type: http, scheme: bearer }
   parameters:
     RoomId:
@@ -132,6 +213,23 @@ components:
       required: true
       description: 12-character room id or its hyphenated share code (case-insensitive)
       schema: { type: string, example: MR82A9Z8VBJQ }
+    DownloadId:
+      name: id
+      in: path
+      required: true
+      description: The `download_id` of a grant
+      schema: { type: string }
+    DownloadTokenQuery:
+      name: token
+      in: query
+      required: false
+      description: Download token, for clients that cannot set headers (OS background downloaders). Authorization wins when both are sent.
+      schema: { type: string }
+  headers:
+    ContentLength: { schema: { type: integer, format: int64 }, description: Bytes in this response }
+    ContentRange: { schema: { type: string, example: "bytes 0-8388607/4831838208" }, description: 206 only }
+    AcceptRanges: { schema: { type: string, example: bytes } }
+    ETag: { schema: { type: string }, description: Strong validator of the grant }
   responses:
     Error:
       description: Error
@@ -196,3 +294,33 @@ components:
         media: { nullable: true, allOf: [{ $ref: "#/components/schemas/MediaRef" }] }
         playback: { $ref: "#/components/schemas/PlaybackSnapshot" }
         created_at: { type: integer, format: int64 }
+    CreateDownload:
+      type: object
+      required: [backend, item_id]
+      properties:
+        backend: { type: string, enum: [jellyfin, plex] }
+        item_id: { type: string, pattern: '^[A-Za-z0-9_-]{1,64}$' }
+        title: { type: string, maxLength: 200, description: Label for the operator panel }
+        kind: { type: string, enum: [movie, episode] }
+    DownloadGrant:
+      type: object
+      properties:
+        url: { type: string, example: /api/v1/downloads/Qm9v/file, description: Relative to the server address }
+        download_id: { type: string }
+        token: { type: string, description: Download token, shown once }
+        size: { type: integer, format: int64 }
+        filename: { type: string }
+        mime: { type: string, example: video/x-matroska }
+        etag: { type: string, description: Strong validator, quoted; use it in If-Range }
+        chunk_bytes: { type: integer, format: int64, description: Segment size to request }
+        max_range_bytes: { type: integer, format: int64, description: Most bytes returned for one ranged request }
+        rate_limit_bps: { type: integer, format: int64 }
+        expires_at: { type: integer, format: int64, description: ms since epoch; idle TTL and absolute age combined }
+    DownloadStatus:
+      type: object
+      properties:
+        download_id: { type: string }
+        size: { type: integer, format: int64 }
+        covered: { type: integer, format: int64, description: Distinct bytes handed over so far (diagnostic; resume from your own offset) }
+        etag: { type: string }
+        expires_at: { type: integer, format: int64 }
