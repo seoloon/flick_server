@@ -2,7 +2,7 @@
 
 import { niceMax } from "@/components/charts";
 import { Notice, Panel, Spinner } from "@/components/flick/ui";
-import { formatBytes, formatCount } from "@/lib/format";
+import { BACKEND_LABEL, OUTCOME_LABEL, formatBytes, formatCount, formatUtcDate } from "@/lib/format";
 import type { DdStats } from "@/lib/types";
 import { ADMIN_ERROR_TEXT, useAdmin } from "@/lib/use-admin";
 
@@ -46,7 +46,7 @@ function DayBars({ days }: { days: DdStats["days"] }) {
             height={Math.max(d.bytes > 0 ? 2 : 0, h)}
             rx={1.5}
           >
-            <title>{`${new Date(d.date_ms).toLocaleDateString("en-GB", { timeZone: "UTC" })}: ${formatBytes(d.bytes)}`}</title>
+            <title>{`${formatUtcDate(d.date_ms)}: ${formatBytes(d.bytes)}`}</title>
           </rect>
         );
       })}
@@ -95,7 +95,7 @@ export function StatsPanel() {
             <dl className="fk-facts">
               {Object.entries(s.by_backend).map(([name, b]) => (
                 <div key={name} style={{ display: "contents" }}>
-                  <dt>{name}</dt>
+                  <dt>{BACKEND_LABEL[name] ?? name}</dt>
                   <dd>
                     {formatBytes(b.bytes)} · {formatCount(b.downloads)} downloads · {formatCount(b.completed)} completed
                   </dd>
@@ -103,7 +103,7 @@ export function StatsPanel() {
               ))}
               {Object.entries(s.by_outcome).map(([name, n]) => (
                 <div key={name} style={{ display: "contents" }}>
-                  <dt>{name.replace("_", " ")}</dt>
+                  <dt>{OUTCOME_LABEL[name] ?? name.replaceAll("_", " ")}</dt>
                   <dd>{formatCount(n)}</dd>
                 </div>
               ))}

@@ -3,7 +3,7 @@
 import { useState } from "react";
 
 import { Button, Dialog, EmptyState, Notice, Panel, Pill, Spinner } from "@/components/flick/ui";
-import { formatBytes, formatSpeed } from "@/lib/format";
+import { BACKEND_LABEL, formatBytes, formatSpeed } from "@/lib/format";
 import type { DdActive, DdActiveDownload, DdOverview } from "@/lib/types";
 import { ADMIN_ERROR_TEXT, useAdmin } from "@/lib/use-admin";
 
@@ -77,7 +77,7 @@ export function ActivePanel() {
                 <small> · {d.user_id}</small>
               </span>
               <span style={{ display: "flex", gap: "0.5rem", alignItems: "center" }}>
-                <Pill tone="plain">{d.backend}</Pill>
+                <Pill tone="plain">{BACKEND_LABEL[d.backend] ?? d.backend}</Pill>
                 <Button
                   variant="danger"
                   size="sm"

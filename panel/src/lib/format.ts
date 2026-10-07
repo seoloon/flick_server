@@ -82,3 +82,21 @@ export function formatSpeed(bps: number): string {
   const b = formatBytes(bps);
   return b === "n/a" ? b : `${b}/s`;
 }
+
+export const OUTCOME_LABEL: Record<string, string> = {
+  completed: "Completed",
+  cancelled: "Cancelled",
+  expired: "Expired",
+  source_changed: "Source changed",
+};
+
+export const BACKEND_LABEL: Record<string, string> = { jellyfin: "Jellyfin", plex: "Plex" };
+
+/** FlickDD dates are shown in UTC everywhere so the table and the daily chart agree. */
+export function formatUtcDateTime(ms: number): string {
+  return `${new Date(ms).toLocaleString("en-GB", { timeZone: "UTC", dateStyle: "short", timeStyle: "short" })} UTC`;
+}
+
+export function formatUtcDate(ms: number): string {
+  return new Date(ms).toLocaleDateString("en-GB", { timeZone: "UTC" });
+}

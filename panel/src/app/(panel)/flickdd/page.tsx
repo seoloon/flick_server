@@ -1,5 +1,6 @@
 import { PageHeader } from "@/components/flick/ui";
 
+import { DdGate } from "./DdGate";
 import { ActivePanel } from "./ActivePanel";
 import { HistoryPanel } from "./HistoryPanel";
 import { StatsPanel } from "./StatsPanel";
@@ -13,9 +14,11 @@ export default function FlickDDPage() {
         title="FlickDD"
         lead="Offline downloads. See live transfers, cut one if needed and follow how much is downloaded."
       />
-      <ActivePanel />
-      <HistoryPanel />
-      <StatsPanel />
+      <DdGate>
+        <ActivePanel />
+        <HistoryPanel />
+        <StatsPanel />
+      </DdGate>
     </div>
   );
 }

@@ -128,4 +128,4 @@ a.fk-btn { text-decoration: none; }
 .dtable th { text-align: left; font-weight: 500; color: var(--muted-foreground); padding: 0.5rem 0.75rem 0.5rem 0; }
 .dtable td { padding: 0.5rem 0.75rem 0.5rem 0; border-top: 1px solid var(--hairline); font-variant-numeric: tabular-nums; max-width: 18rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .daybars { display: block; width: 100%; height: auto; }
-.daybars rect { fill: #fff; }
+.daybars rect { fill: var(--foreground); }
