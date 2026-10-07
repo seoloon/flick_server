@@ -219,7 +219,18 @@ async fn secrets_are_write_only() {
     );
 
     // A string replaces it, null clears it.
-    put(json!({"FLICKDD_JELLYFIN_API_KEY": "second-secret"})).await;
+    let (st, v) = put(json!({"FLICKDD_JELLYFIN_API_KEY": "second-secret"})).await;
+    assert_eq!(st, StatusCode::OK, "{v}");
+    assert!(
+        !v.to_string().contains("second-secret"),
+        "the replace answer"
+    );
+    let (_, mods) = call(&s, Method::GET, "/admin/v1/modules", None).await;
+    assert!(!mods.to_string().contains("second-secret"), "module status");
+    assert!(
+        !mods.to_string().contains("top-secret-jf-key"),
+        "module status"
+    );
     assert_eq!(
         s.state
             .settings
@@ -227,7 +238,8 @@ async fn secrets_are_write_only() {
             .as_deref(),
         Some("second-secret")
     );
-    let (st, _) = put(json!({"FLICKDD_JELLYFIN_API_KEY": null})).await;
+    let (st, v) = put(json!({"FLICKDD_JELLYFIN_API_KEY": null})).await;
+    assert!(!v.to_string().contains("second-secret"), "the refusal");
     assert_eq!(
         st,
         StatusCode::BAD_REQUEST,
@@ -237,10 +249,6 @@ async fn secrets_are_write_only() {
         put(json!({"FLICKDD_JELLYFIN_URL": null, "FLICKDD_JELLYFIN_API_KEY": null})).await;
     assert_eq!(st, StatusCode::OK);
     assert_eq!(s.state.settings.lookup("FLICKDD_JELLYFIN_API_KEY"), None);
-
-    // Module status never carries them either.
-    let (_, mods) = call(&s, Method::GET, "/admin/v1/modules", None).await;
-    assert!(!mods.to_string().contains("secret"));
 }
 
 #[tokio::test]
@@ -302,15 +310,26 @@ async fn responses_are_never_cacheable() {
     use tower::ServiceExt;
 
     let s = server(&[]).await;
-    for (method, path, body) in [
-        (Method::GET, "/admin/v1/modules", None),
-        (Method::GET, "/admin/v1/settings/server", None),
+    for (method, path, body, expected) in [
+        (Method::GET, "/admin/v1/modules", None, StatusCode::OK),
+        (
+            Method::GET,
+            "/admin/v1/settings/server",
+            None,
+            StatusCode::OK,
+        ),
         (
             Method::PUT,
             "/admin/v1/settings/flicksync",
             Some(r#"{"values":{"FLICKSYNC_MAX_ROOM_SIZE":0}}"#),
+            StatusCode::BAD_REQUEST,
         ),
-        (Method::POST, "/admin/v1/modules/flicksync/reload", None),
+        (
+            Method::POST,
+            "/admin/v1/modules/flicksync/reload",
+            None,
+            StatusCode::OK,
+        ),
     ] {
         let mut req = Request::builder()
             .method(method)
@@ -323,6 +342,7 @@ async fn responses_are_never_cacheable() {
             .oneshot(req.body(Body::from(body.unwrap_or(""))).unwrap())
             .await
             .unwrap();
+        assert_eq!(resp.status(), expected, "{path}");
         assert_eq!(resp.headers()["cache-control"], "no-store", "{path}");
     }
 }
@@ -349,4 +369,38 @@ async fn concurrent_server_reloads_are_serialised() {
     }
     let (_, inv) = call(&s, Method::GET, "/admin/v1/invite", None).await;
     assert_eq!(inv["address"], "https://last.example.com");
+}
+
+#[tokio::test]
+async fn a_refused_secret_write_never_echoes_the_value() {
+    const MARKER: &str = "MARKER-SECRET-0123456789-abcdefghij-xyz";
+    let s = server(&[]).await;
+    let revision = s.state.settings.revision();
+    let keys_before = s.state.settings.lookup("FLICKSYNC_AUTH_KEYS");
+
+    let bad_keys = format!("bad kid:srv:{MARKER}");
+    let (st, v) = call(
+        &s,
+        Method::PUT,
+        "/admin/v1/settings/server",
+        Some(json!({"values": {"FLICKSYNC_AUTH_KEYS": bad_keys}})),
+    )
+    .await;
+    assert_eq!(st, StatusCode::BAD_REQUEST, "{v}");
+    assert_eq!(v["error"]["code"], "INVALID_PAYLOAD");
+    assert!(!v.to_string().contains(MARKER), "server refusal body");
+    assert_eq!(s.state.settings.lookup("FLICKSYNC_AUTH_KEYS"), keys_before);
+
+    let (st, v) = call(
+        &s,
+        Method::PUT,
+        "/admin/v1/settings/flickdd",
+        Some(json!({"values": {"FLICKDD_PLEX_TOKEN": MARKER}})),
+    )
+    .await;
+    assert_eq!(st, StatusCode::BAD_REQUEST, "{v}");
+    assert!(!v.to_string().contains(MARKER), "flickdd refusal body");
+    assert_eq!(s.state.settings.lookup("FLICKDD_PLEX_TOKEN"), None);
+
+    assert_eq!(s.state.settings.revision(), revision, "nothing was written");
 }
