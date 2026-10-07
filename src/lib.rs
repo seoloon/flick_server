@@ -15,6 +15,7 @@ pub mod dd;
 pub mod errors;
 pub mod invite;
 pub mod metrics;
+pub mod modules;
 pub mod protocol;
 pub mod ratelimit;
 pub mod room;

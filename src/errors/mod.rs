@@ -37,6 +37,7 @@ pub enum ErrorCode {
     QuotaExceeded,
     RangeNotSatisfiable,
     BackendUnavailable,
+    ModuleDisabled,
     Internal,
 }
 
@@ -54,7 +55,7 @@ impl ErrorCode {
             RateLimited | TooManyRooms | TooManyDownloads | QuotaExceeded => 429,
             RangeNotSatisfiable => 416,
             BackendUnavailable => 502,
-            TooManyConnections => 503,
+            TooManyConnections | ModuleDisabled => 503,
             Internal => 500,
             InvalidMessage | UnknownType | UnsupportedVersion | InvalidPayload
             | InvalidPosition | InvalidRate | InvalidSequence | InvalidMedia | NoMedia => 400,
@@ -80,3 +81,17 @@ impl Error {
 }
 
 pub type Result<T> = std::result::Result<T, Error>;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn module_disabled_is_a_503_with_a_stable_wire_name() {
+        assert_eq!(ErrorCode::ModuleDisabled.http_status(), 503);
+        assert_eq!(
+            serde_json::to_string(&ErrorCode::ModuleDisabled).unwrap(),
+            "\"MODULE_DISABLED\""
+        );
+    }
+}
