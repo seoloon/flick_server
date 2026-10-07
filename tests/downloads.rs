@@ -513,7 +513,9 @@ async fn metrics_include_flickdd_only_when_enabled() {
 #[tokio::test]
 async fn the_sweeper_expires_idle_grants() {
     let fake = FakeMedia::start(10 * KIB).await;
-    let s = enabled_server(&fake, &[("FLICKDD_GRANT_TTL", "1")]).await;
+    // 3 s of idle TTL: the grant is certainly still there for the metrics check below,
+    // even on a slow machine; the sweeper runs every 50 ms (TestServer).
+    let s = enabled_server(&fake, &[("FLICKDD_GRANT_TTL", "3")]).await;
     let dd = s.state.dd.clone().unwrap();
     let file = dd
         .backends
@@ -534,16 +536,22 @@ async fn the_sweeper_expires_idle_grants() {
             now_ms(),
         )
         .unwrap();
+    let created = Instant::now();
     assert_eq!(dd.grants.count(), 1);
     let metrics = metrics_text(&s).await;
     assert!(metrics.contains("flickdd_active_downloads 1"), "{metrics}");
-    for _ in 0..60 {
-        if dd.grants.count() == 0 {
-            return;
-        }
+    // Poll until swept, with a generous deadline (TTL + 7 s) rather than a fixed count.
+    let deadline = created + Duration::from_secs(10);
+    while dd.grants.count() != 0 {
+        assert!(Instant::now() < deadline, "the grant was never swept");
         tokio::time::sleep(Duration::from_millis(50)).await;
     }
-    panic!("the grant was never swept");
+    let after = created.elapsed();
+    assert!(
+        after >= Duration::from_millis(2500),
+        "swept too early: {after:?}"
+    );
+    assert_eq!(dd.stats.history()[0].outcome, Outcome::Expired);
 }
 
 // ---------------------------------------------------------------------------------------
