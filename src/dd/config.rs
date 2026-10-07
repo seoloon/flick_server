@@ -104,15 +104,34 @@ impl DdConfig {
         })
     }
 
+    /// Validate a configuration that is not being started: every value is read and checked
+    /// like an enabled one, and a missing backend is only an error when `require_backend`.
+    pub fn check(env: Lookup, require_backend: bool) -> Result<(), ConfigError> {
+        let c = Self::read(env, true)?;
+        if require_backend {
+            c.validate_backend()?;
+        }
+        c.validate_limits()
+    }
+
+    fn validate_backend(&self) -> Result<(), ConfigError> {
+        if self.jellyfin.is_none() && self.plex.is_none() {
+            return Err(ConfigError::Inconsistent(
+                "FLICKDD_ENABLED=true requires at least one backend (Jellyfin or Plex)".to_owned(),
+            ));
+        }
+        Ok(())
+    }
+
     /// Coherence of an enabled configuration: a backend, and limits that make sense.
     fn validate(&self) -> Result<(), ConfigError> {
+        self.validate_backend()?;
+        self.validate_limits()
+    }
+
+    fn validate_limits(&self) -> Result<(), ConfigError> {
         let inconsistent = |m: &str| Err(ConfigError::Inconsistent(m.to_owned()));
         let c = self;
-        if c.jellyfin.is_none() && c.plex.is_none() {
-            return inconsistent(
-                "FLICKDD_ENABLED=true requires at least one backend (Jellyfin or Plex)",
-            );
-        }
         if c.max_parallel == 0
             || c.max_global == 0
             || c.rate_bps == 0
@@ -139,6 +158,33 @@ impl DdConfig {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn check_validates_even_while_disabled() {
+        let m = |vars: &'static [(&'static str, &'static str)]| {
+            move |k: &str| {
+                vars.iter()
+                    .find(|(n, _)| *n == k)
+                    .map(|(_, v)| v.to_string())
+            }
+        };
+        // Limits are checked although FLICKDD_ENABLED is not set.
+        assert!(DdConfig::check(&m(&[("FLICKDD_MAX_PARALLEL", "0")]), false).is_err());
+        // No backend is fine when the module is not enabled, refused when it is.
+        assert!(DdConfig::check(&m(&[]), false).is_ok());
+        assert!(DdConfig::check(&m(&[]), true).is_err());
+        assert!(
+            DdConfig::check(
+                &m(&[
+                    ("FLICKDD_JELLYFIN_URL", "http://jf:8096"),
+                    ("FLICKDD_JELLYFIN_API_KEY", "k")
+                ]),
+                true
+            )
+            .is_ok()
+        );
+        // A half-configured backend is always an error.
+        assert!(DdConfig::check(&m(&[("FLICKDD_PLEX_URL", "http://plex")]), false).is_err());
+    }
     use super::*;
     use std::collections::HashMap;
 

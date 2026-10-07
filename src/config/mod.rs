@@ -77,6 +77,8 @@ pub struct Config {
     pub http: HttpConfig,
     pub sweep_interval_ms: u64,
     pub shutdown_grace_secs: u64,
+    /// FlickSync starts at boot (FLICKSYNC_ENABLED, default false).
+    pub sync_enabled: bool,
     /// Where the auto-generated signing key lives (`FLICKSYNC_DATA_DIR`).
     pub data_dir: String,
     /// True when `FLICKSYNC_AUTH_KEYS` or `FLICKSYNC_AUTH_KEYS_FILE` is set: no key is generated then.
@@ -379,6 +381,7 @@ impl Config {
             http,
             sweep_interval_ms: parse(env, "FLICKSYNC_SWEEP_INTERVAL_MS", 1000)?,
             shutdown_grace_secs: parse(env, "FLICKSYNC_SHUTDOWN_GRACE", 10)?,
+            sync_enabled: parse_bool(env, "FLICKSYNC_ENABLED", false)?,
             data_dir: parse(env, "FLICKSYNC_DATA_DIR", "./data".to_owned())?,
             keys_configured,
             public,
@@ -399,6 +402,12 @@ fn parse_key_list(raw: &str) -> Vec<String> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn flicksync_is_disabled_unless_enabled_explicitly() {
+        assert!(!cfg(&[]).unwrap().sync_enabled);
+        assert!(cfg(&[("FLICKSYNC_ENABLED", "true")]).unwrap().sync_enabled);
+        assert!(cfg(&[("FLICKSYNC_ENABLED", "perhaps")]).is_err());
+    }
     use super::*;
     use std::collections::HashMap;
 
