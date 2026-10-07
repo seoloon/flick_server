@@ -14,6 +14,9 @@ use super::config::{BackendConfig, DdConfig};
 pub use super::types::{BackendKind, ResolvedFile};
 
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
+/// Most a metadata answer may weigh. One item's JSON is a few KiB; anything near this is a
+/// misbehaving (or hostile) backend, never buffered whole.
+const MAX_METADATA_BYTES: usize = 4 * 1024 * 1024;
 
 #[derive(Debug, thiserror::Error)]
 pub enum BackendError {
@@ -191,6 +194,27 @@ fn header_u64(h: &HeaderMap, name: reqwest::header::HeaderName) -> Option<u64> {
     h.get(name)?.to_str().ok()?.trim().parse().ok()
 }
 
+/// The whole body of `resp`, refused (fixed message) as soon as it exceeds `cap` bytes,
+/// whether it says so in `Content-Length` or not.
+async fn read_capped(mut resp: Response, cap: usize) -> Result<Vec<u8>, BackendError> {
+    let too_large = || unavailable("the backend answer is too large");
+    if resp.content_length().is_some_and(|n| n > cap as u64) {
+        return Err(too_large());
+    }
+    let mut body = Vec::new();
+    while let Some(chunk) = resp
+        .chunk()
+        .await
+        .map_err(|e| unavailable(e.without_url()))?
+    {
+        if body.len() + chunk.len() > cap {
+            return Err(too_large());
+        }
+        body.extend_from_slice(&chunk);
+    }
+    Ok(body)
+}
+
 impl Backends {
     /// HTTP client without redirects, 5 s connect timeout and no total timeout (downloads
     /// are long); the first byte is bounded by `upstream_timeout_ms` per request.
@@ -238,7 +262,8 @@ impl Backends {
         }
     }
 
-    /// Metadata call: status mapping, then the JSON body (bounded by the same timeout).
+    /// Metadata call: status mapping, then the JSON body (bounded by the same timeout and
+    /// by [`MAX_METADATA_BYTES`]).
     async fn get_json<T: serde::de::DeserializeOwned>(
         &self,
         kind: BackendKind,
@@ -251,10 +276,10 @@ impl Backends {
             StatusCode::NOT_FOUND => return Err(BackendError::NotFound),
             s => return Err(unavailable(format!("{} answered {s}", kind.as_str()))),
         }
-        let body = tokio::time::timeout(self.upstream_timeout, resp.bytes())
-            .await
-            .map_err(|_| unavailable("timed out reading the backend answer"))?
-            .map_err(|e| unavailable(e.without_url()))?;
+        let body =
+            tokio::time::timeout(self.upstream_timeout, read_capped(resp, MAX_METADATA_BYTES))
+                .await
+                .map_err(|_| unavailable("timed out reading the backend answer"))??;
         serde_json::from_slice(&body)
             .map_err(|e| unavailable(format!("unexpected {} answer: {e}", kind.as_str())))
     }
@@ -480,6 +505,66 @@ mod tests {
             assert_eq!(url.port(), Some(32400), "{key}");
             assert_eq!(url.username(), "", "{key}");
         }
+    }
+
+    #[tokio::test]
+    async fn oversized_metadata_answers_are_refused() {
+        use axum::Router;
+        use axum::body::Body;
+        use axum::routing::get;
+
+        // 5 MiB of valid JSON: `{"Items":[],"Pad":"xxxx..."}`.
+        fn big_json() -> Vec<u8> {
+            let mut v = br#"{"Items":[],"Pad":""#.to_vec();
+            v.resize(v.len() + 5 * 1024 * 1024, b'x');
+            v.extend_from_slice(br#""}"#);
+            v
+        }
+        let app = Router::new()
+            // Announced in Content-Length.
+            .route("/Items", get(|| async { big_json() }))
+            // Streamed without a Content-Length.
+            .route(
+                "/library/metadata/{id}",
+                get(|| async {
+                    let pieces = big_json()
+                        .chunks(64 * 1024)
+                        .map(|c| Ok::<_, std::io::Error>(axum::body::Bytes::copy_from_slice(c)))
+                        .collect::<Vec<_>>();
+                    Body::from_stream(futures_util::stream::iter(pieces))
+                }),
+            )
+            .route(
+                "/small/{id}",
+                get(|| async { r#"{"Items":[]}"#.to_owned() }),
+            );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}", listener.local_addr().unwrap());
+        tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        let vars = [
+            ("FLICKDD_ENABLED", "true".to_owned()),
+            ("FLICKDD_JELLYFIN_URL", url.clone()),
+            ("FLICKDD_JELLYFIN_API_KEY", "k".to_owned()),
+            ("FLICKDD_PLEX_URL", url),
+            ("FLICKDD_PLEX_TOKEN", "t".to_owned()),
+        ];
+        let lookup = |k: &str| vars.iter().find(|(n, _)| *n == k).map(|(_, v)| v.clone());
+        let b = Backends::new(&DdConfig::from_lookup(&lookup).unwrap());
+        for kind in BackendKind::ALL {
+            match b.resolve(kind, "movie1").await {
+                Err(BackendError::Unavailable(detail)) => {
+                    assert_eq!(detail, "the backend answer is too large", "{kind:?}")
+                }
+                other => panic!("{kind:?}: expected a refusal, got {other:?}"),
+            }
+        }
+        // A normal answer still goes through the same reader.
+        let cfg = b.config(BackendKind::Jellyfin).unwrap();
+        let items: JfItems = b
+            .get_json(BackendKind::Jellyfin, cfg, "/small/x")
+            .await
+            .unwrap();
+        assert!(items.items.is_empty());
     }
 
     #[tokio::test]
