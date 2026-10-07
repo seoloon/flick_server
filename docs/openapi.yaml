@@ -154,7 +154,7 @@ paths:
         "200":
           description: Status
           content: { application/json: { schema: { $ref: "#/components/schemas/DownloadStatus" } } }
-        "401": { description: No download token sent, content: { application/json: { schema: { $ref: "#/components/schemas/ErrorBody" } } } }
+        "401": { $ref: "#/components/responses/Error" }
         "404": { description: "Unknown, expired, finished or cancelled grant, or wrong token (indistinguishable)", content: { application/json: { schema: { $ref: "#/components/schemas/ErrorBody" } } } }
     delete:
       tags: [downloads]
@@ -180,7 +180,7 @@ paths:
       responses:
         "200":
           description: Whole file (no Range, or If-Range did not match)
-          headers: { Content-Length: { $ref: "#/components/headers/ContentLength" }, Content-Range: { $ref: "#/components/headers/ContentRange" }, Accept-Ranges: { $ref: "#/components/headers/AcceptRanges" }, ETag: { $ref: "#/components/headers/ETag" } }
+          headers: { Content-Length: { $ref: "#/components/headers/ContentLength" }, Accept-Ranges: { $ref: "#/components/headers/AcceptRanges" }, ETag: { $ref: "#/components/headers/ETag" } }
           content: { application/octet-stream: { schema: { type: string, format: binary } } }
         "206":
           description: Requested range

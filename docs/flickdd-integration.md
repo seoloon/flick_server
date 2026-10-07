@@ -407,7 +407,7 @@ class DownloadManager {
       await this.store.save(i); } }
     finally { this.running.delete(i.id); if (this.items.includes(i)) await this.store.save(i); this.pump(); }
   }
-  private async create(i: Item) {
+  private async create(i: Item) {                                   // a 401 here = expired Flick JWT: jwt() must refresh it; onError retries (counted)
     const r = await fetch(this.base + "/api/v1/downloads", { method: "POST", headers: { Authorization: `Bearer ${await this.jwt()}`,
       "Content-Type": "application/json" }, body: JSON.stringify({ backend: i.backend, item_id: i.itemId, title: i.title, kind: i.kind }) });
     if (!r.ok) throw await fail(r);
@@ -419,7 +419,7 @@ class DownloadManager {
   private async segment(i: Item, outer: AbortSignal) {
     const g = i.grant!, end = Math.min(i.offset + g.chunk_bytes, g.size) - 1, ctl = new AbortController();
     let timer: any; const arm = () => { clearTimeout(timer); timer = setTimeout(() => ctl.abort(), 20_000); };   // stall: 20 s
-    outer.addEventListener("abort", () => ctl.abort()); arm();
+    const onAbort = () => ctl.abort(); outer.addEventListener("abort", onAbort); arm();
     try {
       const r = await fetch(this.base + g.url, { signal: ctl.signal, headers: { Authorization: `Bearer ${g.token}`,
         Range: `bytes=${i.offset}-${end}`, "If-Range": g.etag } });
@@ -433,7 +433,7 @@ class DownloadManager {
         await sink.write(value); i.offset += value.length; got += value.length; i.fails = 0; await this.store.save(i); }   // write, then save
         await sink.sync(); } finally { await sink.close(); }
       if (got < want) throw new Error("body cut short");                                    // normal: loop resumes at i.offset
-    } finally { clearTimeout(timer); }
+    } finally { clearTimeout(timer); outer.removeEventListener("abort", onAbort); }
   }
   private async onError(i: Item, e: any) {
     const s = e instanceof HttpError ? e.status : 0, code = e?.code;
