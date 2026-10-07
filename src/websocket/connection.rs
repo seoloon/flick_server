@@ -66,16 +66,17 @@ async fn send_error(socket: &mut WebSocket, e: &Error, limit: Duration) -> bool 
 pub async fn run(
     mut socket: WebSocket,
     state: AppState,
+    rt: Arc<crate::app::SyncRuntime>,
     room_id: String,
     identity: Identity,
     _permit: OwnedSemaphorePermit,
 ) {
-    let cfg = &state.cfg.ws;
+    let cfg = &rt.ws;
     let send_limit = Duration::from_secs(cfg.send_timeout_secs);
     let idle_limit = Duration::from_secs(cfg.idle_timeout_secs);
     let pid = identity.user_id.clone();
 
-    let Attachment { conn_id, mut rx } = match state.manager.attach(&room_id, &identity) {
+    let Attachment { conn_id, mut rx } = match rt.manager.attach(&room_id, &identity) {
         Ok(a) => a,
         Err(e) => {
             debug!(room_id = %room_id, participant_id = %pid, code = ?e.code, "websocket attach refused");
@@ -112,7 +113,7 @@ pub async fn run(
                             Err(Error::new(ErrorCode::MessageTooLarge, "message too large"))
                         } else {
                             match ClientMessage::parse(text.as_str()) {
-                                Ok(m) => state.manager.handle_message(&room_id, &pid, conn_id, m),
+                                Ok(m) => rt.manager.handle_message(&room_id, &pid, conn_id, m),
                                 Err(e) => {
                                     state.metrics.malformed_messages_total.inc();
                                     debug!(room_id = %room_id, participant_id = %pid, code = ?e.code, "malformed message");
@@ -183,7 +184,7 @@ pub async fn run(
         }
     }
 
-    state.manager.detach(&room_id, &pid, conn_id);
+    rt.manager.detach(&room_id, &pid, conn_id);
     // Let the closing handshake finish: dropping the socket while the peer still has data
     // in flight can make the OS reset the connection and lose our final frames.
     let _ = timeout(CLOSE_HANDSHAKE_WAIT, async {

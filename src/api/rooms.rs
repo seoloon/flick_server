@@ -62,7 +62,8 @@ pub async fn create_room(
             )
         })?
     };
-    let created = state.manager.create_room(
+    let sync = state.sync()?;
+    let created = sync.manager.create_room(
         &identity,
         CreateOptions {
             control_mode: req.control_mode,
@@ -81,7 +82,8 @@ pub async fn get_room(
     Authed(identity): Authed,
     Path(room_id): Path<String>,
 ) -> Result<Json<RoomView>, ApiError> {
-    Ok(Json(state.manager.get_room(&room_id, &identity)?))
+    let sync = state.sync()?;
+    Ok(Json(sync.manager.get_room(&room_id, &identity)?))
 }
 
 /// `POST /api/v1/rooms/{room_id}/join`: reserve a seat; open the WebSocket afterwards.
@@ -90,7 +92,8 @@ pub async fn join_room(
     Authed(identity): Authed,
     Path(room_id): Path<String>,
 ) -> Result<Json<RoomAccess>, ApiError> {
-    let room = state.manager.join(&room_id, &identity)?;
+    let sync = state.sync()?;
+    let room = sync.manager.join(&room_id, &identity)?;
     Ok(Json(access(room, identity.user_id)))
 }
 
@@ -100,6 +103,7 @@ pub async fn leave_room(
     Authed(identity): Authed,
     Path(room_id): Path<String>,
 ) -> Result<StatusCode, ApiError> {
-    state.manager.leave(&room_id, &identity)?;
+    let sync = state.sync()?;
+    sync.manager.leave(&room_id, &identity)?;
     Ok(StatusCode::NO_CONTENT)
 }

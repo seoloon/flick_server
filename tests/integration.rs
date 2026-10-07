@@ -162,7 +162,7 @@ async fn full_watch_together_flow() {
         .await;
     assert_eq!(st, StatusCode::NO_CONTENT);
     assert_eq!(a.expect_closed().await, Some(4002));
-    let mgr = s.state.manager.clone();
+    let mgr = s.state.sync().unwrap().manager.clone();
     eventually("room destroyed", || mgr.room_count() == 0).await;
     let (st, _) = s
         .http(
@@ -436,7 +436,7 @@ async fn host_can_close_the_room_for_everyone() {
     assert_eq!(b.expect("room_closed").await["reason"], "host_closed");
     assert_eq!(b.expect_closed().await, Some(4003));
     assert_eq!(a.expect_closed().await, Some(4003));
-    let mgr = s.state.manager.clone();
+    let mgr = s.state.sync().unwrap().manager.clone();
     eventually("room removed", || mgr.room_count() == 0).await;
 }
 
@@ -653,7 +653,7 @@ async fn idle_connections_are_dropped() {
     a.expect("room_state").await;
     // Not polling the socket means pongs are never sent back.
     tokio::time::sleep(std::time::Duration::from_millis(3500)).await;
-    let mgr = s.state.manager.clone();
+    let mgr = s.state.sync().unwrap().manager.clone();
     let metrics = s.state.metrics.clone();
     eventually("server dropped idle socket", || {
         metrics.ws_connections.get() == 0

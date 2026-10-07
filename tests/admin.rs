@@ -390,7 +390,7 @@ mod dd_admin {
         assert!(resp.chunk().await.unwrap().is_some());
         // Paused from here on: nobody reads, the pump blocks on its channel.
 
-        let dd = s.state.dd.clone().unwrap();
+        let dd = s.state.dd().unwrap();
         eventually("streaming", || {
             dd.grants.active_views(now_ms()).iter().any(|v| v.streaming)
         })
@@ -512,7 +512,7 @@ mod dd_admin {
     #[tokio::test]
     async fn disabled_dd_is_404_with_no_store_even_with_a_valid_admin_token() {
         let s = start().await;
-        assert!(s.state.dd.is_none());
+        assert!(s.state.dd().is_none());
         let r = raw(
             &s,
             reqwest::Method::GET,

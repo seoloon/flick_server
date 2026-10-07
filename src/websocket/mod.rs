@@ -41,24 +41,25 @@ pub async fn upgrade(
     headers: HeaderMap,
     ws: WebSocketUpgrade,
 ) -> Result<Response, ApiError> {
-    if !origin_allowed(&headers, &state.cfg.http.allowed_origins) {
+    if !origin_allowed(&headers, &state.server().cfg.http.allowed_origins) {
         warn!("websocket upgrade rejected: origin not allowed");
         return Err(Error::new(ErrorCode::Forbidden, "origin not allowed").into());
     }
     let identity = authenticate(&state, &headers, query.access_token.as_deref())?;
+    let sync = state.sync()?;
     // Fail with a regular HTTP error (404/403/409...) before upgrading when possible.
-    state.manager.can_attach(&room_id, &identity)?;
-    let permit = state
+    sync.manager.can_attach(&room_id, &identity)?;
+    let permit = sync
         .conn_limit
         .clone()
         .try_acquire_owned()
         .map_err(|_| Error::new(ErrorCode::TooManyConnections, "too many connections"))?;
 
-    let max = state.cfg.ws.max_message_bytes;
+    let max = sync.ws.max_message_bytes;
     Ok(ws
         .max_message_size(max)
         .max_frame_size(max)
-        .on_upgrade(move |socket| connection::run(socket, state, room_id, identity, permit)))
+        .on_upgrade(move |socket| connection::run(socket, state, sync, room_id, identity, permit)))
 }
 
 #[cfg(test)]

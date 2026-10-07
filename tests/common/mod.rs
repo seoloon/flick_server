@@ -5,6 +5,7 @@ pub mod fake_media;
 
 use std::collections::HashMap;
 use std::net::SocketAddr;
+use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use axum::body::Body;
@@ -20,7 +21,7 @@ use tower::ServiceExt;
 
 use flicksync::app::{AppState, build_router, spawn_sweeper};
 use flicksync::auth::{Claims, mint_token};
-use flicksync::config::Config;
+use flicksync::settings::{Env, Settings};
 
 pub const SECRET: &str = "integration-test-secret-0123456789abcdef";
 pub const SERVER: &str = "flick-1";
@@ -81,11 +82,14 @@ impl TestServer {
         set("FLICKSYNC_WS_MAX_MESSAGE_BYTES", "4096");
         set("FLICKSYNC_CORS_ORIGINS", "https://app.example");
         set("FLICKSYNC_METRICS_ENABLED", "true");
+        set("FLICKSYNC_ENABLED", "true");
         for (k, v) in extra {
             set(k, v);
         }
-        let cfg = Config::from_lookup(&move |k| vars.get(k).cloned()).unwrap();
-        let state = AppState::new(cfg).unwrap();
+        let env: Env = Arc::new(move |k| vars.get(k).cloned());
+        let dir = flicksync::settings::scratch_dir("server");
+        let settings = Settings::open(&dir, env).unwrap();
+        let state = AppState::new(settings).unwrap();
         std::mem::drop(spawn_sweeper(&state));
         let app = build_router(state.clone());
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();

@@ -5,6 +5,7 @@
 //! (which contains the signing key), so responses are never cacheable and the token must stay
 //! server-side: the panel's server calls this API, browsers never see the token.
 
+use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use axum::Json;
@@ -36,7 +37,7 @@ impl FromRequestParts<AppState> for AdminAuth {
         parts: &mut Parts,
         state: &AppState,
     ) -> Result<Self, Self::Rejection> {
-        let Some(expected) = &state.cfg.http.admin_token else {
+        let Some(expected) = &state.boot.http.admin_token else {
             return Err(StatusCode::NOT_FOUND.into_response());
         };
         let ok = bearer_token(&parts.headers)
@@ -72,19 +73,21 @@ fn now_ms() -> u64 {
 /// `GET /admin/v1/overview`
 pub async fn overview(_: AdminAuth, State(state): State<AppState>) -> Response {
     let m = &state.metrics;
+    let sync = state.sync_opt();
     no_store(
         StatusCode::OK,
         json!({
             "version": env!("CARGO_PKG_VERSION"),
             "now": now_ms(),
             "uptime_secs": state.started_at.elapsed().as_secs(),
-            "accepting": state.manager.is_accepting(),
-            "ready": state.manager.is_accepting() && state.auth.has_keys(),
-            "rooms": state.manager.room_count(),
-            "max_rooms": state.cfg.manager.max_rooms,
+            "running": sync.is_some(),
+            "accepting": sync.as_ref().is_some_and(|s| s.manager.is_accepting()),
+            "ready": state.server().auth.has_keys(),
+            "rooms": sync.as_ref().map_or(0, |s| s.manager.room_count()),
+            "max_rooms": sync.as_ref().map_or(0, |s| s.manager.config().max_rooms),
             "participants": m.participants_active.get(),
             "connections": m.ws_connections.get(),
-            "max_connections": state.cfg.ws.max_connections,
+            "max_connections": sync.as_ref().map_or(0, |s| s.ws.max_connections),
             "rtt_avg_ms": m.rtt_avg_us.get() as f64 / 1000.0,
         }),
     )
@@ -92,9 +95,10 @@ pub async fn overview(_: AdminAuth, State(state): State<AppState>) -> Response {
 
 /// `GET /admin/v1/invite`: the one-link invitation (contains the signing key).
 pub async fn invite(_: AdminAuth, State(state): State<AppState>) -> Result<Response, ApiError> {
-    let inv = invite::invitation(&state.cfg)
+    let server = state.server();
+    let inv = invite::invitation(&server.cfg)
         .map_err(|e| Error::new(ErrorCode::Internal, e.to_string()))?;
-    let (endpoint, guessed) = invite::endpoint(&state.cfg);
+    let (endpoint, guessed) = invite::endpoint(&server.cfg);
     let url = inv.to_url();
     let (kid, server_id) = parse_key_entry(&inv.key)
         .map(|(k, s, _)| (k.to_owned(), s.to_owned()))
@@ -106,8 +110,8 @@ pub async fn invite(_: AdminAuth, State(state): State<AppState>) -> Result<Respo
             "address": endpoint.http_base(),
             "tls": endpoint.tls,
             "address_guessed": guessed,
-            "key_source": if state.cfg.keys_configured { "environment" } else { "file" },
-            "key_count": state.cfg.auth.keys.len(),
+            "key_source": if server.cfg.keys_configured { "environment" } else { "file" },
+            "key_count": server.cfg.auth.keys.len(),
             "kid": kid,
             "server_id": server_id,
             "qr": invite::qr_modules(&url),
@@ -123,8 +127,9 @@ struct AdminRoom {
 }
 
 /// `GET /admin/v1/rooms`
-pub async fn list_rooms(_: AdminAuth, State(state): State<AppState>) -> Response {
-    let rooms: Vec<AdminRoom> = state
+pub async fn list_rooms(_: AdminAuth, State(state): State<AppState>) -> Result<Response, ApiError> {
+    let sync = state.sync()?;
+    let rooms: Vec<AdminRoom> = sync
         .manager
         .admin_rooms()
         .into_iter()
@@ -133,7 +138,10 @@ pub async fn list_rooms(_: AdminAuth, State(state): State<AppState>) -> Response
             room,
         })
         .collect();
-    no_store(StatusCode::OK, json!({ "now": now_ms(), "rooms": rooms }))
+    Ok(no_store(
+        StatusCode::OK,
+        json!({ "now": now_ms(), "rooms": rooms }),
+    ))
 }
 
 /// `DELETE /admin/v1/rooms/{room_id}`: force-close a (frozen) room.
@@ -142,15 +150,16 @@ pub async fn close_room(
     State(state): State<AppState>,
     Path(room_id): Path<String>,
 ) -> Result<StatusCode, ApiError> {
-    state.manager.admin_close_room(&room_id)?;
+    state.sync()?.manager.admin_close_room(&room_id)?;
     Ok(StatusCode::NO_CONTENT)
 }
 
 /// `GET /admin/v1/stats`: counters, drift distribution and a rolling history (1 h, 10 s steps).
-pub async fn stats(_: AdminAuth, State(state): State<AppState>) -> Response {
+pub async fn stats(_: AdminAuth, State(state): State<AppState>) -> Result<Response, ApiError> {
+    let sync = state.sync()?;
     let m = &state.metrics;
-    let d = &state.cfg.manager.room.drift;
-    no_store(
+    let d = &sync.manager.config().room.drift;
+    Ok(no_store(
         StatusCode::OK,
         json!({
             "now": now_ms(),
@@ -174,14 +183,13 @@ pub async fn stats(_: AdminAuth, State(state): State<AppState>) -> Response {
             "history_interval_secs": crate::metrics::History::INTERVAL_MS / 1000,
             "history": m.history.snapshot(),
         }),
-    )
+    ))
 }
 
 /// The FlickDD state, or 404 when FlickDD is disabled.
-fn dd_state(state: &AppState) -> Result<&std::sync::Arc<DdState>, ApiError> {
+fn dd_state(state: &AppState) -> Result<Arc<DdState>, ApiError> {
     state
-        .dd
-        .as_ref()
+        .dd()
         .ok_or_else(|| Error::new(ErrorCode::DownloadNotFound, "FlickDD is disabled").into())
 }
 

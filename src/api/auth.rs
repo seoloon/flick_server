@@ -33,7 +33,7 @@ pub fn authenticate(
             ErrorCode::Unauthenticated,
             "missing bearer token",
         )),
-        Some(t) => state.auth.verify(t),
+        Some(t) => state.server().auth.verify(t),
     };
     result.map_err(|e| {
         state.metrics.auth_failures_total.inc();

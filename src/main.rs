@@ -1,11 +1,13 @@
 use std::io::{Read, Write};
 use std::net::TcpStream;
 use std::process::ExitCode;
+use std::sync::Arc;
 use std::time::Duration;
 
-use flicksync::app;
+use flicksync::app::{self, AppState};
 use flicksync::config::{Config, LogFormat};
 use flicksync::invite::{self, KeySource};
+use flicksync::settings::{Env, Settings};
 use tracing_subscriber::EnvFilter;
 
 fn init_tracing(cfg: &Config) {
@@ -102,7 +104,15 @@ usage: flicksync invite [--rotate] [--qr]"
 
 #[tokio::main]
 async fn main() -> ExitCode {
-    let mut cfg = match Config::from_env() {
+    let env: Env = Arc::new(|k| std::env::var(k).ok());
+    let settings = match Settings::open(&Settings::data_dir_from_env(&env), env) {
+        Ok(s) => s,
+        Err(e) => {
+            eprintln!("configuration error: {e}");
+            return ExitCode::from(2);
+        }
+    };
+    let mut cfg = match settings.config() {
         Ok(c) => c,
         Err(e) => {
             eprintln!("configuration error: {e}");
@@ -147,7 +157,14 @@ async fn main() -> ExitCode {
         );
         return ExitCode::from(2);
     }
-    if let Err(e) = app::serve(cfg).await {
+    let state = match AppState::new(settings) {
+        Ok(s) => s,
+        Err(e) => {
+            eprintln!("configuration error: {e}");
+            return ExitCode::from(2);
+        }
+    };
+    if let Err(e) = app::serve(state).await {
         tracing::error!(error = %e, "fatal error");
         return ExitCode::FAILURE;
     }

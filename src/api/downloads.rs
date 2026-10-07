@@ -80,10 +80,9 @@ impl IntoResponse for DdError {
     }
 }
 
-fn enabled(state: &AppState) -> Result<&Arc<DdState>, DdError> {
+fn enabled(state: &AppState) -> Result<Arc<DdState>, DdError> {
     state
-        .dd
-        .as_ref()
+        .dd()
         .ok_or_else(|| Error::new(ErrorCode::DownloadNotFound, "FlickDD is disabled").into())
 }
 
@@ -426,7 +425,7 @@ pub async fn file(
     headers: HeaderMap,
     query: TokenParam,
 ) -> Result<Response, DdError> {
-    let dd = enabled(&state)?.clone();
+    let dd = enabled(&state)?;
     let g = dd
         .grants
         .authorize(&id, download_token(&headers, &query)?, now_ms())?;

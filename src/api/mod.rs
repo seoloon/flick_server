@@ -19,8 +19,8 @@ use crate::app::AppState;
 use crate::websocket;
 
 pub fn router(state: AppState) -> Router {
-    let cors = cors_layer(&state.cfg.http.allowed_origins);
-    let body_limit = state.cfg.http.max_body_bytes;
+    let cors = cors_layer(&state.server().cfg.http.allowed_origins);
+    let body_limit = state.boot.http.max_body_bytes;
 
     // Every admin response (success, 204 and errors) is uncacheable.
     let admin = Router::new()

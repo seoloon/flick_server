@@ -493,10 +493,10 @@ async fn metrics_text(s: &common::TestServer) -> String {
 #[tokio::test]
 async fn dd_state_exists_only_when_enabled() {
     let off = common::TestServer::start(&[]).await;
-    assert!(off.state.dd.is_none());
+    assert!(off.state.dd().is_none());
     let fake = FakeMedia::start(KIB).await;
     let on = enabled_server(&fake, &[]).await;
-    assert!(on.state.dd.is_some());
+    assert!(on.state.dd().is_some());
 }
 
 #[tokio::test]
@@ -516,7 +516,7 @@ async fn the_sweeper_expires_idle_grants() {
     // 3 s of idle TTL: the grant is certainly still there for the metrics check below,
     // even on a slow machine; the sweeper runs every 50 ms (TestServer).
     let s = enabled_server(&fake, &[("FLICKDD_GRANT_TTL", "3")]).await;
-    let dd = s.state.dd.clone().unwrap();
+    let dd = s.state.dd().unwrap();
     let file = dd
         .backends
         .resolve(BackendKind::Jellyfin, ITEM)
@@ -619,7 +619,7 @@ impl Api {
     }
 
     fn dd(&self) -> Arc<DdState> {
-        self.server.state.dd.clone().unwrap()
+        self.server.state.dd().unwrap()
     }
 
     fn url(&self, path: &str) -> String {

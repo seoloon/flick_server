@@ -1,58 +1,188 @@
-//! Application wiring: shared state, background tasks and the server loop.
+//! Application wiring: shared state, module slots, background tasks and the server loop.
 
 use std::net::SocketAddr;
-use std::sync::Arc;
+use std::sync::{Arc, MutexGuard, RwLock};
 use std::time::{Duration, Instant};
 
 use axum::Router;
 use tokio::net::TcpListener;
 use tokio::sync::Semaphore;
 use tokio::task::JoinHandle;
-use tracing::{error, info};
+use tracing::{error, info, warn};
 
 use crate::auth::{AuthConfigError, Authenticator};
-use crate::config::Config;
+use crate::config::{Config, ConfigError, WsConfig};
 use crate::dd::DdState;
+use crate::errors::{Error, ErrorCode};
+use crate::invite::{self, InviteError};
 use crate::metrics::Metrics;
+use crate::modules::{ModuleId, Running, Slot, SlotState};
 use crate::room::RoomManager;
+use crate::settings::Settings;
 use crate::sync::{Clock, SystemClock};
+
+/// What FlickSync needs while it runs. Dropped (after `RoomManager::shutdown`) when it stops.
+pub struct SyncRuntime {
+    pub manager: Arc<RoomManager>,
+    pub ws: WsConfig,
+    pub conn_limit: Arc<Semaphore>,
+}
+
+/// Server-wide settings in force (keys, public address, CORS, metrics). Replaced as a whole.
+pub struct ServerRuntime {
+    pub cfg: Config,
+    pub auth: Authenticator,
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum StartError {
+    #[error("{0}")]
+    Config(#[from] ConfigError),
+    #[error("cannot load or create the signing key: {0}")]
+    Keys(#[from] InviteError),
+    #[error("{0}")]
+    Auth(#[from] AuthConfigError),
+}
+
+fn build_server(settings: &Settings) -> Result<ServerRuntime, StartError> {
+    let mut cfg = settings.config()?;
+    invite::ensure_keys(&mut cfg)?;
+    let auth = Authenticator::new(&cfg.auth)?;
+    Ok(ServerRuntime { cfg, auth })
+}
 
 #[derive(Clone)]
 pub struct AppState {
-    pub cfg: Arc<Config>,
-    pub manager: Arc<RoomManager>,
-    pub auth: Arc<Authenticator>,
+    /// Read once at boot: bind address, intervals, body limit. Never swapped.
+    pub boot: Arc<Config>,
+    pub settings: Arc<Settings>,
+    server: Arc<RwLock<Arc<ServerRuntime>>>,
+    sync_slot: Arc<Slot<SyncRuntime>>,
+    dd_slot: Arc<Slot<DdState>>,
     pub metrics: Arc<Metrics>,
-    pub conn_limit: Arc<Semaphore>,
     pub started_at: Instant,
-    /// FlickDD state; `Some` only when `FLICKDD_ENABLED=true`.
-    pub dd: Option<Arc<DdState>>,
+    clock: Arc<dyn Clock>,
 }
 
 impl AppState {
-    pub fn new(cfg: Config) -> Result<Self, AuthConfigError> {
-        Self::with_clock(cfg, Arc::new(SystemClock::new()))
+    pub fn new(settings: Arc<Settings>) -> Result<Self, StartError> {
+        Self::with_clock(settings, Arc::new(SystemClock::new()))
     }
 
-    pub fn with_clock(cfg: Config, clock: Arc<dyn Clock>) -> Result<Self, AuthConfigError> {
-        let metrics = Arc::new(Metrics::default());
-        let auth = Arc::new(Authenticator::new(&cfg.auth)?);
+    pub fn with_clock(settings: Arc<Settings>, clock: Arc<dyn Clock>) -> Result<Self, StartError> {
+        let boot = settings.config()?;
+        let server = build_server(&settings)?;
+        let state = Self {
+            boot: Arc::new(boot),
+            settings,
+            server: Arc::new(RwLock::new(Arc::new(server))),
+            sync_slot: Arc::new(Slot::default()),
+            dd_slot: Arc::new(Slot::default()),
+            metrics: Arc::new(Metrics::default()),
+            started_at: Instant::now(),
+            clock,
+        };
+        for id in ModuleId::ALL {
+            if state.settings.is_enabled(id.scope()) {
+                let _gate = state.gate(id);
+                state.start_locked(id);
+            }
+        }
+        Ok(state)
+    }
+
+    pub fn server(&self) -> Arc<ServerRuntime> {
+        self.server
+            .read()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone()
+    }
+
+    pub fn sync_opt(&self) -> Option<Arc<SyncRuntime>> {
+        self.sync_slot.get()
+    }
+
+    /// The running FlickSync, or `MODULE_DISABLED` (503).
+    pub fn sync(&self) -> crate::errors::Result<Arc<SyncRuntime>> {
+        self.sync_opt().ok_or_else(|| {
+            Error::new(
+                ErrorCode::ModuleDisabled,
+                "FlickSync is not running on this server",
+            )
+        })
+    }
+
+    pub fn dd(&self) -> Option<Arc<DdState>> {
+        self.dd_slot.get()
+    }
+
+    fn gate(&self, id: ModuleId) -> MutexGuard<'_, ()> {
+        match id {
+            ModuleId::FlickSync => self.sync_slot.gate(),
+            ModuleId::FlickDd => self.dd_slot.gate(),
+        }
+    }
+
+    fn build_sync(&self) -> Result<SyncRuntime, String> {
+        let cfg = self.settings.config().map_err(|e| e.to_string())?;
         let manager = Arc::new(RoomManager::new(
             cfg.manager.clone(),
-            clock,
-            metrics.clone(),
+            self.clock.clone(),
+            self.metrics.clone(),
         ));
-        let dd = cfg.dd.enabled.then(|| DdState::new(cfg.dd.clone()));
-        let conn_limit = Arc::new(Semaphore::new(cfg.ws.max_connections));
-        Ok(Self {
-            cfg: Arc::new(cfg),
+        Ok(SyncRuntime {
             manager,
-            auth,
-            metrics,
-            conn_limit,
-            started_at: Instant::now(),
-            dd,
+            conn_limit: Arc::new(Semaphore::new(cfg.ws.max_connections)),
+            ws: cfg.ws,
         })
+    }
+
+    fn build_dd(&self) -> Result<Arc<DdState>, String> {
+        let cfg = self.settings.config().map_err(|e| e.to_string())?;
+        if !cfg.dd.enabled {
+            return Err("FlickDD is not enabled".to_owned());
+        }
+        Ok(DdState::new(cfg.dd))
+    }
+
+    /// Start `id` with the settings in force. The caller holds the module's gate. A module that
+    /// is already running is left alone; a failure leaves it `Failed`, never panics.
+    fn start_locked(&self, id: ModuleId) {
+        let fingerprint = self.settings.fingerprint(id.scope());
+        match id {
+            ModuleId::FlickSync => {
+                if self.sync_slot.get().is_some() {
+                    return;
+                }
+                match self.build_sync() {
+                    Ok(rt) => {
+                        self.sync_slot
+                            .replace(SlotState::Running(Running::new(Arc::new(rt), fingerprint)));
+                        info!("FlickSync started");
+                    }
+                    Err(message) => {
+                        warn!(error = %message, "FlickSync could not start");
+                        self.sync_slot.replace(SlotState::Failed(message));
+                    }
+                }
+            }
+            ModuleId::FlickDd => {
+                if self.dd_slot.get().is_some() {
+                    return;
+                }
+                match self.build_dd() {
+                    Ok(rt) => {
+                        self.dd_slot
+                            .replace(SlotState::Running(Running::new(rt, fingerprint)));
+                        info!("FlickDD started");
+                    }
+                    Err(message) => {
+                        warn!(error = %message, "FlickDD could not start");
+                        self.dd_slot.replace(SlotState::Failed(message));
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -60,18 +190,19 @@ pub fn build_router(state: AppState) -> Router {
     crate::api::router(state)
 }
 
-/// Periodic room maintenance (reconnection grace, expiry, sync heartbeat).
+/// Periodic maintenance of whatever is running (reconnection grace, expiry, sync heartbeat).
 pub fn spawn_sweeper(state: &AppState) -> JoinHandle<()> {
-    let manager = state.manager.clone();
-    let dd = state.dd.clone();
-    let period = Duration::from_millis(state.cfg.sweep_interval_ms.max(10));
+    let state = state.clone();
+    let period = Duration::from_millis(state.boot.sweep_interval_ms.max(10));
     tokio::spawn(async move {
         let mut tick = tokio::time::interval(period);
         tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         loop {
             tick.tick().await;
-            manager.sweep();
-            if let Some(dd) = &dd {
+            if let Some(sync) = state.sync_opt() {
+                sync.manager.sweep();
+            }
+            if let Some(dd) = state.dd() {
                 dd.sweep();
             }
         }
@@ -100,29 +231,29 @@ async fn shutdown_signal() {
 }
 
 /// Bind and serve until SIGINT/SIGTERM.
-pub async fn serve(cfg: Config) -> Result<(), Box<dyn std::error::Error>> {
-    let addr: SocketAddr = format!("{}:{}", cfg.host, cfg.port).parse()?;
-    let grace = Duration::from_secs(cfg.shutdown_grace_secs);
-    let state = AppState::new(cfg)?;
+pub async fn serve(state: AppState) -> Result<(), Box<dyn std::error::Error>> {
+    let addr: SocketAddr = format!("{}:{}", state.boot.host, state.boot.port).parse()?;
+    let grace = Duration::from_secs(state.boot.shutdown_grace_secs);
     let sweeper = spawn_sweeper(&state);
     let app = build_router(state.clone());
     let listener = TcpListener::bind(addr).await?;
     info!(
         %addr,
         version = env!("CARGO_PKG_VERSION"),
-        auth_keys = state.cfg.auth.keys.len(),
+        auth_keys = state.server().cfg.auth.keys.len(),
         "flicksync listening"
     );
 
-    let manager = state.manager.clone();
-    let dd = state.dd.clone();
+    let stopping = state.clone();
     let server = axum::serve(listener, app).with_graceful_shutdown(async move {
         shutdown_signal().await;
         info!("shutdown signal received");
-        // Close rooms and sockets first, otherwise open WebSockets would hold shutdown up.
-        manager.shutdown();
-        // Same for download streams: a throttled file response can last hours.
-        if let Some(dd) = &dd {
+        // Close rooms and sockets first, otherwise open WebSockets would hold shutdown up;
+        // same for download streams, a throttled file response can last hours.
+        if let Some(sync) = stopping.sync_opt() {
+            sync.manager.shutdown();
+        }
+        if let Some(dd) = stopping.dd() {
             let cut = dd.shutdown();
             info!(streams = cut, "FlickDD download streams stopped");
         }
