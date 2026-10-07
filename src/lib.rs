@@ -18,5 +18,6 @@ pub mod metrics;
 pub mod protocol;
 pub mod ratelimit;
 pub mod room;
+pub mod settings;
 pub mod sync;
 pub mod websocket;
