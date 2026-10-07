@@ -1,7 +1,7 @@
 //! Application wiring: shared state, module slots, background tasks and the server loop.
 
 use std::net::SocketAddr;
-use std::sync::{Arc, MutexGuard, RwLock};
+use std::sync::{Arc, Mutex, MutexGuard, RwLock};
 use std::time::{Duration, Instant};
 
 use axum::Router;
@@ -69,6 +69,8 @@ pub struct AppState {
     pub started_at: Instant,
     clock: Arc<dyn Clock>,
     log_control: Arc<RwLock<Option<LogControl>>>,
+    /// Serialises `reload_server` so a stale build can never overwrite a newer one.
+    reload_lock: Arc<Mutex<()>>,
 }
 
 impl AppState {
@@ -90,6 +92,7 @@ impl AppState {
             started_at: Instant::now(),
             clock,
             log_control: Arc::new(RwLock::new(None)),
+            reload_lock: Arc::new(Mutex::new(())),
         };
         for id in ModuleId::ALL {
             if state.settings.is_enabled(id.scope()) {
@@ -114,6 +117,7 @@ impl AppState {
     /// Rebuild the server runtime from the stored settings and swap it in. On error the
     /// runtime in force is kept. Running modules are not restarted.
     pub fn reload_server(&self) -> Result<(), StartError> {
+        let _serial = self.reload_lock.lock().unwrap_or_else(|e| e.into_inner());
         let next = build_server(&self.settings)?;
         let level = next.cfg.log_level.clone();
         *self.server.write().unwrap_or_else(|e| e.into_inner()) = Arc::new(next);

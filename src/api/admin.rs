@@ -14,7 +14,10 @@ use axum::extract::{FromRequestParts, Path, State};
 use axum::http::request::Parts;
 use axum::http::{HeaderValue, StatusCode, header};
 use axum::response::{IntoResponse, Response};
-use serde::Serialize;
+use std::collections::BTreeMap;
+
+use axum::extract::rejection::JsonRejection;
+use serde::{Deserialize, Serialize};
 use serde_json::json;
 use tracing::warn;
 
@@ -25,8 +28,11 @@ use crate::auth::parse_key_entry;
 use crate::dd::{DdState, now_ms as dd_now_ms};
 use crate::errors::{Error, ErrorCode};
 use crate::invite;
+use crate::modules::ModuleId;
 use crate::room::AdminRoomView;
 use crate::room::manager::share_code;
+use crate::settings::SettingsError;
+use crate::settings::store::Scope;
 
 /// Extractor: succeeds only for a valid admin token.
 pub struct AdminAuth;
@@ -269,4 +275,111 @@ pub async fn no_store_layer(mut r: Response) -> Response {
     r.headers_mut()
         .insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
     r
+}
+
+fn not_found() -> Response {
+    StatusCode::NOT_FOUND.into_response()
+}
+
+fn bad_request(message: impl Into<String>) -> ApiError {
+    ApiError(Error::new(ErrorCode::InvalidPayload, message))
+}
+
+fn settings_error(e: SettingsError) -> ApiError {
+    match e {
+        SettingsError::Store(inner) => {
+            warn!(error = %inner, "could not save the settings");
+            ApiError(Error::new(
+                ErrorCode::Internal,
+                "could not save the settings",
+            ))
+        }
+        other => bad_request(other.to_string()),
+    }
+}
+
+/// `GET /admin/v1/modules`
+pub async fn modules(_: AdminAuth, State(state): State<AppState>) -> Response {
+    let list: Vec<_> = ModuleId::ALL
+        .into_iter()
+        .map(|id| state.module_status(id))
+        .collect();
+    no_store(StatusCode::OK, json!({ "modules": list }))
+}
+
+/// `POST /admin/v1/modules/{id}/{start|stop|reload}`
+pub async fn module_action(
+    _: AdminAuth,
+    State(state): State<AppState>,
+    Path((id, action)): Path<(String, String)>,
+) -> Result<Response, ApiError> {
+    let Some(id) = ModuleId::from_id(&id) else {
+        return Ok(not_found());
+    };
+    let status = match action.as_str() {
+        "start" => state.start_module(id).map_err(settings_error)?,
+        "stop" => state.stop_module(id).map_err(settings_error)?,
+        "reload" => state.reload_module(id),
+        _ => return Ok(not_found()),
+    };
+    Ok(no_store(StatusCode::OK, status))
+}
+
+/// `GET /admin/v1/settings/{scope}`
+pub async fn get_settings(
+    _: AdminAuth,
+    State(state): State<AppState>,
+    Path(scope): Path<String>,
+) -> Response {
+    match Scope::from_id(&scope) {
+        Some(scope) => no_store(StatusCode::OK, state.settings.view(scope)),
+        None => not_found(),
+    }
+}
+
+#[derive(Deserialize)]
+pub struct PutSettings {
+    values: BTreeMap<String, serde_json::Value>,
+}
+
+/// `PUT /admin/v1/settings/{scope}`: a partial update. Strings, numbers and booleans set a
+/// value, `null` removes it, an omitted name is left alone.
+pub async fn put_settings(
+    _: AdminAuth,
+    State(state): State<AppState>,
+    Path(scope): Path<String>,
+    body: Result<Json<PutSettings>, JsonRejection>,
+) -> Result<Response, ApiError> {
+    let Some(scope) = Scope::from_id(&scope) else {
+        return Ok(not_found());
+    };
+    let Json(body) = body.map_err(|_| bad_request("body must be {\"values\": {...}}"))?;
+    let mut patch = BTreeMap::new();
+    for (name, value) in body.values {
+        let value = match value {
+            serde_json::Value::Null => None,
+            serde_json::Value::String(s) => Some(s),
+            serde_json::Value::Number(n) => Some(n.to_string()),
+            serde_json::Value::Bool(b) => Some(b.to_string()),
+            _ => {
+                return Err(bad_request(format!(
+                    "{name}: expected a string, number, boolean or null"
+                )));
+            }
+        };
+        patch.insert(name, value);
+    }
+    let view = state.settings.put(scope, patch).map_err(settings_error)?;
+    Ok(no_store(StatusCode::OK, view))
+}
+
+/// `POST /admin/v1/settings/server/reload`
+pub async fn reload_server(
+    _: AdminAuth,
+    State(state): State<AppState>,
+) -> Result<Response, ApiError> {
+    state
+        .reload_server()
+        .map_err(|e| bad_request(e.to_string()))?;
+    Ok(no_store(StatusCode::OK, json!({ "reloaded": true })))
 }

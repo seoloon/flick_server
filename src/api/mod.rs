@@ -34,6 +34,19 @@ pub fn router(state: AppState) -> Router {
         .route("/admin/v1/dd/history", get(admin::dd_history))
         .route("/admin/v1/dd/stats", get(admin::dd_stats))
         .route("/admin/v1/dd/{id}", delete(admin::dd_cancel))
+        .route("/admin/v1/modules", get(admin::modules))
+        .route(
+            "/admin/v1/modules/{id}/{action}",
+            post(admin::module_action),
+        )
+        .route(
+            "/admin/v1/settings/{scope}",
+            get(admin::get_settings).put(admin::put_settings),
+        )
+        .route(
+            "/admin/v1/settings/server/reload",
+            post(admin::reload_server),
+        )
         .layer(axum::middleware::map_response(admin::no_store_layer));
 
     Router::new()
