@@ -212,13 +212,14 @@ impl AppState {
         }
     }
 
-    /// Persist "enabled" and start the module.
+    /// Persist "enabled" and start the module. The gate is taken first so that the persisted
+    /// switch and the runtime cannot be reordered by a concurrent call.
     pub fn start_module(
         &self,
         id: ModuleId,
     ) -> Result<crate::modules::ModuleStatus, crate::settings::SettingsError> {
-        self.settings.set_enabled(id.scope(), true)?;
         let _gate = self.gate(id);
+        self.settings.set_enabled(id.scope(), true)?;
         self.start_locked(id);
         Ok(self.module_status(id))
     }
@@ -228,8 +229,8 @@ impl AppState {
         &self,
         id: ModuleId,
     ) -> Result<crate::modules::ModuleStatus, crate::settings::SettingsError> {
-        self.settings.set_enabled(id.scope(), false)?;
         let _gate = self.gate(id);
+        self.settings.set_enabled(id.scope(), false)?;
         self.stop_locked(id);
         Ok(self.module_status(id))
     }

@@ -130,7 +130,9 @@ async fn a_failing_start_leaves_the_module_failed_and_the_rest_running() {
 #[tokio::test]
 async fn a_request_in_flight_survives_a_stop() {
     let s = TestServer::start(&[]).await;
+    let _room = s.create_room("alice").await;
     let held = s.state.sync().unwrap(); // what a handler keeps for the whole request
+    assert_eq!(held.manager.room_count(), 1);
     s.state.stop_module(ModuleId::FlickSync).unwrap();
     assert_eq!(
         held.manager.room_count(),
@@ -168,7 +170,14 @@ fn concurrent_lifecycle_calls_are_serialised() {
     for t in threads {
         t.join().unwrap();
     }
-    // Whatever the last call was, the state is coherent and one more start settles it.
+    // The runtime and the persisted switch must agree, whatever the interleaving was.
+    let m = s.state.module_status(ModuleId::FlickSync);
+    assert_eq!(
+        m.state == "running",
+        m.enabled,
+        "runtime and persisted switch disagree"
+    );
+    // One more start settles it.
     let m = s.state.start_module(ModuleId::FlickSync).unwrap();
     assert_eq!((m.state, m.enabled), ("running", true));
     let a = s.state.sync().unwrap();
