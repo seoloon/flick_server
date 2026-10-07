@@ -7,6 +7,7 @@ export type AdminErrorCode =
   | "ADMIN_TOKEN_MISSING"
   | "ADMIN_API_DISABLED"
   | "ADMIN_TOKEN_REJECTED"
+  | "DD_DISABLED"
   | "SIGNED_OUT"
   | "UNKNOWN";
 
@@ -19,6 +20,8 @@ export const ADMIN_ERROR_TEXT: Record<AdminErrorCode, string> = {
     "FlickSync's admin API is off. Set FLICKSYNC_ADMIN_TOKEN on the server, then restart it.",
   ADMIN_TOKEN_REJECTED:
     "FlickSync rejected the admin token. Make sure the panel and FlickSync use the same FLICKSYNC_ADMIN_TOKEN.",
+  DD_DISABLED:
+    "FlickDD is off. Set FLICKDD_ENABLED=true and a backend on the server, then restart it.",
   SIGNED_OUT: "Your session has ended. Sign in again.",
   UNKNOWN: "Something went wrong while talking to FlickSync. Try again.",
 };
@@ -35,7 +38,11 @@ export interface AdminState<T> {
  * keeps the last good data on a failed refresh, and sends the user to the login page when the
  * session has ended.
  */
-export function useAdmin<T>(resource: string, intervalMs: number): AdminState<T> {
+export function useAdmin<T>(
+  resource: string,
+  intervalMs: number,
+  base = "flicksync",
+): AdminState<T> {
   const [data, setData] = useState<T | null>(null);
   const [error, setError] = useState<AdminErrorCode | null>(null);
   const [loading, setLoading] = useState(true);
@@ -45,7 +52,7 @@ export function useAdmin<T>(resource: string, intervalMs: number): AdminState<T>
     if (inflight.current) return;
     inflight.current = true;
     try {
-      const res = await fetch(`/api/flicksync/${resource}`, { cache: "no-store" });
+      const res = await fetch(`/api/${base}/${resource}`, { cache: "no-store" });
       if (res.status === 401) {
         window.location.assign("/login");
         return;
@@ -64,7 +71,7 @@ export function useAdmin<T>(resource: string, intervalMs: number): AdminState<T>
       inflight.current = false;
       setLoading(false);
     }
-  }, [resource]);
+  }, [base, resource]);
 
   useEffect(() => {
     load();

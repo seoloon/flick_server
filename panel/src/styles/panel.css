@@ -115,3 +115,17 @@ a.fk-btn { text-decoration: none; }
 @media (prefers-reduced-motion: reduce) {
   * { transition-duration: 0.01ms !important; animation-duration: 0.01ms !important; }
 }
+
+/* FlickDD */
+.dl { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 0.5rem 1rem; align-items: center; padding: 0.75rem 0; border-top: 1px solid var(--hairline); font-size: 0.875rem; }
+.dl:first-child { border-top: 0; }
+.dl__title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 500; }
+.dl__title small, .dl__meta { color: var(--muted-foreground); font-variant-numeric: tabular-nums; }
+.dl__progress { grid-column: 1 / -1; display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 1rem; align-items: center; }
+.dl__meta { grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: 0.25rem 1rem; }
+.table-wrap { overflow-x: auto; }
+.dtable { width: 100%; border-collapse: collapse; font-size: 0.875rem; }
+.dtable th { text-align: left; font-weight: 500; color: var(--muted-foreground); padding: 0.5rem 0.75rem 0.5rem 0; }
+.dtable td { padding: 0.5rem 0.75rem 0.5rem 0; border-top: 1px solid var(--hairline); font-variant-numeric: tabular-nums; max-width: 18rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.daybars { display: block; width: 100%; height: auto; }
+.daybars rect { fill: #fff; }

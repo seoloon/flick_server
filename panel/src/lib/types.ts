@@ -102,3 +102,88 @@ export interface Stats {
   history_interval_secs: number;
   history: Sample[];
 }
+
+// Shapes returned by FlickDD's admin API (dd/*). Timestamps are ms since the Unix epoch.
+
+export type DdBackend = "jellyfin" | "plex";
+export type DdOutcome = "completed" | "cancelled" | "expired" | "source_changed";
+
+export interface DdTotals {
+  downloads: number;
+  completed: number;
+  bytes_served: number;
+  resumes: number;
+  upstream_errors: number;
+  rejected: number;
+}
+
+export interface DdOverview {
+  enabled: boolean;
+  backends: { jellyfin: boolean; plex: boolean };
+  limits: {
+    max_parallel: number;
+    max_global: number;
+    rate_bps: number;
+    chunk_bytes: number;
+    max_range_bytes: number;
+    grant_ttl_secs: number;
+  };
+  active: number;
+  totals: DdTotals;
+}
+
+export interface DdDownload {
+  download_id: string;
+  /** "{server_id}/{user_id}", shown as is. */
+  user_id: string;
+  user_name: string;
+  backend: DdBackend;
+  item_id: string;
+  /** May contain control characters; render as text only. */
+  title: string | null;
+  kind: string | null;
+  size: number;
+  covered: number;
+  served: number;
+  segments: number;
+  resumes: number;
+  started_at: number;
+}
+
+export interface DdActiveDownload extends DdDownload {
+  last_activity: number;
+  speed_bps: number;
+  streaming: boolean;
+}
+
+export interface DdActive {
+  now: number;
+  downloads: DdActiveDownload[];
+}
+
+export interface DdFinishedDownload extends DdDownload {
+  finished_at: number;
+  outcome: DdOutcome;
+}
+
+export interface DdHistory {
+  now: number;
+  downloads: DdFinishedDownload[];
+}
+
+export interface DdStats {
+  now: number;
+  totals: DdTotals;
+  days: { day: number; date_ms: number; bytes: number; completed: number }[];
+  top_titles: {
+    backend: DdBackend;
+    item_id: string;
+    title: string | null;
+    kind: string | null;
+    count: number;
+    bytes: number;
+  }[];
+  by_backend: Record<string, { bytes: number; downloads: number; completed: number }>;
+  by_outcome: Record<string, number>;
+  rejected: Record<string, number>;
+}

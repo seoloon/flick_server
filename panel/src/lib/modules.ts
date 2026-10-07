@@ -21,6 +21,13 @@ export const MODULES: PanelModule[] = [
     icon: "monitor-play",
     summary: "Watch Together: invitation link, live rooms and sync statistics.",
   },
+  {
+    id: "flickdd",
+    label: "FlickDD",
+    href: "/flickdd",
+    icon: "download",
+    summary: "Offline downloads: live transfers, limits and download statistics.",
+  },
 ];
 
 export const HOME = { id: "overview", label: "Overview", href: "/", icon: "house" as IconName };

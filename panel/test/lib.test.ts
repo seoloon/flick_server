@@ -3,7 +3,22 @@ import { test } from "node:test";
 
 import { AttemptLimiter } from "../src/lib/limiter.ts";
 import { createSessionToken, passwordMatches, verifySessionToken } from "../src/lib/session.ts";
-import { formatDuration, formatPosition, livePosition } from "../src/lib/format.ts";
+import {
+  formatBytes,
+  formatDuration,
+  formatPosition,
+  formatSpeed,
+  livePosition,
+} from "../src/lib/format.ts";
+
+test("formatBytes and formatSpeed use binary units", () => {
+  assert.equal(formatBytes(0), "0 B");
+  assert.equal(formatBytes(1023), "1023 B");
+  assert.equal(formatBytes(1536), "1.5 KiB");
+  assert.equal(formatBytes(5 * 1024 ** 3), "5.0 GiB");
+  assert.equal(formatSpeed(10 * 1024 * 1024), "10.0 MiB/s");
+  assert.equal(formatBytes(Number.NaN), "n/a");
+});
 
 const PW = "correct horse battery staple";
 

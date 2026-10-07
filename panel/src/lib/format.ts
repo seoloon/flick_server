@@ -62,3 +62,23 @@ export const PRESENCE_LABEL: Record<string, string> = {
   reconnecting: "Reconnecting",
   disconnected: "Not connected",
 };
+
+const BYTE_UNITS = ["KiB", "MiB", "GiB", "TiB", "PiB"];
+
+/** Binary units: "1023 B", "1.5 KiB", "5.0 GiB". */
+export function formatBytes(n: number): string {
+  if (!Number.isFinite(n) || n < 0) return "n/a";
+  if (n < 1024) return `${Math.round(n)} B`;
+  let v = n / 1024;
+  let i = 0;
+  while (v >= 1024 && i < BYTE_UNITS.length - 1) {
+    v /= 1024;
+    i++;
+  }
+  return `${v.toFixed(1)} ${BYTE_UNITS[i]}`;
+}
+
+export function formatSpeed(bps: number): string {
+  const b = formatBytes(bps);
+  return b === "n/a" ? b : `${b}/s`;
+}
