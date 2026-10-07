@@ -168,6 +168,10 @@ pub async fn create(
     let dd = enabled(&state)?;
     let identity = authenticate(&state, &headers, None)?;
     identity.require(PERM_DOWNLOAD)?;
+    // Same key as the room rate limiter: user ids are only unique per Flick server.
+    let user_key = format!("{}/{}", identity.server_id, identity.user_id);
+    // Every attempt counts, refused ones included: a client looping on create is stopped.
+    dd.admit_create(&user_key, dd.now_mono_ms())?;
     let req: CreateRequest = serde_json::from_slice(&body).map_err(|_| {
         invalid("expected {backend: jellyfin|plex, item_id, title?, kind?: movie|episode} as JSON")
     })?;
@@ -177,6 +181,9 @@ pub async fn create(
     if !dd.backends.has(req.backend) {
         return Err(not_configured());
     }
+    // No free slot: refuse before asking the backend anything. `Grants::create` checks
+    // again after the resolve, under the same lock as the slot it takes.
+    dd.grants.check_slots(&user_key)?;
     let file = dd
         .backends
         .resolve(req.backend, &req.item_id)
@@ -191,8 +198,7 @@ pub async fn create(
     let now = now_ms();
     let created = dd.grants.create(
         NewGrant {
-            // Same key as the room rate limiter: user ids are only unique per Flick server.
-            user_id: format!("{}/{}", identity.server_id, identity.user_id),
+            user_id: user_key,
             user_name: identity.display_name,
             backend: req.backend,
             item_id: req.item_id,

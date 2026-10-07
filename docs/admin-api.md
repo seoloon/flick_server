@@ -156,14 +156,14 @@ entry has the fields of an active one except `speed_bps`, `streaming` and `last_
   "by_backend": { "jellyfin": { "bytes": 90000000000, "downloads": 30, "completed": 28 },
                   "plex": { "bytes": 6636764160, "downloads": 11, "completed": 9 } },
   "by_outcome": { "completed": 37, "cancelled": 2, "expired": 2, "source_changed": 0 },
-  "rejected": { "global": 0, "slots": 3, "rate": 2, "quota": 0 }
+  "rejected": { "create": 0, "global": 0, "slots": 3, "rate": 2, "quota": 0 }
 }
 ```
 
 * `days` always has 30 entries (zero-filled), oldest first, ending today; `date_ms` is the start of the day in UTC.
 * `top_titles` lists the 10 most completed items.
-* `rejected` counts refusals by reason: `slots` (per-user limit), `global` (server limit), `rate` (request rate guard),
-  `quota` (over-serve allowance).
+* `rejected` counts refusals by reason: `create` (creation rate limit, 30 per minute per user), `slots` (per-user
+  limit), `global` (server limit), `rate` (request rate guard), `quota` (over-serve allowance).
 
 The same numbers are exported on `/metrics` as `flickdd_active_downloads`, `flickdd_grants_total{outcome}`,
 `flickdd_bytes_served_total{backend}`, `flickdd_resumes_total`, `flickdd_upstream_errors_total` and

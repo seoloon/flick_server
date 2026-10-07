@@ -32,6 +32,8 @@ pub struct FakeKnobs {
     pub delay_first_byte_ms: AtomicU64,
     /// Number of file (byte) requests served, metadata requests excluded.
     pub requests: AtomicU64,
+    /// Number of metadata requests (Jellyfin `/Items`, Plex `/library/metadata/{id}`).
+    pub metadata_requests: AtomicU64,
     /// `Range` header of the last file request.
     pub last_range: Mutex<Option<String>>,
     /// File response bodies currently alive on the server side.
@@ -88,6 +90,10 @@ impl FakeMedia {
         self.knobs.requests.load(Ordering::SeqCst)
     }
 
+    pub fn metadata_requests(&self) -> u64 {
+        self.knobs.metadata_requests.load(Ordering::SeqCst)
+    }
+
     pub fn open_bodies(&self) -> i64 {
         self.knobs.open_bodies.load(Ordering::SeqCst)
     }
@@ -115,6 +121,7 @@ async fn jf_items(
     headers: HeaderMap,
     Query(q): Query<HashMap<String, String>>,
 ) -> Response {
+    k.metadata_requests.fetch_add(1, Ordering::SeqCst);
     first_byte_delay(&k).await;
     if !authorized(&headers, "x-emby-token", JF_KEY) {
         return StatusCode::UNAUTHORIZED.into_response();
@@ -152,6 +159,7 @@ async fn jf_download(State(k): Knobs, headers: HeaderMap, Path(id): Path<String>
 }
 
 async fn plex_metadata(State(k): Knobs, headers: HeaderMap, Path(id): Path<String>) -> Response {
+    k.metadata_requests.fetch_add(1, Ordering::SeqCst);
     first_byte_delay(&k).await;
     if !authorized(&headers, "x-plex-token", PLEX_TOKEN) {
         return StatusCode::UNAUTHORIZED.into_response();

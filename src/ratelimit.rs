@@ -33,6 +33,16 @@ impl TokenBucket {
         }
     }
 
+    /// Milliseconds until the next token is available (0 when one is available now).
+    pub fn wait_ms(&self, now: Millis) -> Millis {
+        let elapsed = now.saturating_sub(self.last) as f64;
+        let tokens = (self.tokens + elapsed * self.refill_per_ms).min(self.capacity);
+        if tokens >= 1.0 || self.refill_per_ms <= 0.0 {
+            return 0;
+        }
+        ((1.0 - tokens) / self.refill_per_ms).ceil() as Millis
+    }
+
     /// True when the bucket is full again (safe to forget about it).
     pub fn is_idle(&self, now: Millis) -> bool {
         let elapsed = now.saturating_sub(self.last) as f64;
@@ -62,6 +72,16 @@ mod tests {
         assert!(b.try_acquire(1_000_000));
         assert!(b.try_acquire(1_000_000));
         assert!(!b.try_acquire(1_000_000));
+    }
+
+    #[test]
+    fn wait_until_the_next_token() {
+        let mut b = TokenBucket::new(2.0, 0.5, 0); // one token every 2 s
+        assert_eq!(b.wait_ms(0), 0);
+        assert!(b.try_acquire(0) && b.try_acquire(0));
+        assert_eq!(b.wait_ms(0), 2_000);
+        assert_eq!(b.wait_ms(1_500), 500);
+        assert_eq!(b.wait_ms(2_000), 0);
     }
 
     #[test]

@@ -141,7 +141,11 @@ paths:
         "401": { $ref: "#/components/responses/Error" }
         "403": { $ref: "#/components/responses/Error" }
         "404": { description: "DOWNLOAD_NOT_FOUND (unknown item, or FlickDD disabled)", content: { application/json: { schema: { $ref: "#/components/schemas/ErrorBody" } } } }
-        "429": { description: "TOO_MANY_DOWNLOADS (10 per user, 100 per server)", content: { application/json: { schema: { $ref: "#/components/schemas/ErrorBody" } } } }
+        "429":
+          description: TOO_MANY_DOWNLOADS (10 per user, 100 per server; checked before the backend is asked) or RATE_LIMITED (more than 30 creations per minute per user, with Retry-After)
+          headers:
+            Retry-After: { schema: { type: integer }, description: Seconds, only for RATE_LIMITED }
+          content: { application/json: { schema: { $ref: "#/components/schemas/ErrorBody" } } }
         "502": { description: "BACKEND_UNAVAILABLE (generic message; detail is in the server logs)", content: { application/json: { schema: { $ref: "#/components/schemas/ErrorBody" } } } }
         "503": { description: "BACKEND_UNAVAILABLE (this backend is not configured)", content: { application/json: { schema: { $ref: "#/components/schemas/ErrorBody" } } } }
   /api/v1/downloads/{id}:

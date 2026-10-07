@@ -864,9 +864,15 @@ async fn eleventh_download_is_rejected() {
         grants.push(api.create("alice").await);
     }
     let body = json!({ "backend": "plex", "item_id": ITEM });
+    let resolved = api.fake.metadata_requests();
     let (status, json) = api.post_create(&download_jwt("alice"), body.clone()).await;
     assert_eq!(status, 429, "{json}");
     assert_eq!(json["error"]["code"], "TOO_MANY_DOWNLOADS");
+    assert_eq!(
+        api.fake.metadata_requests(),
+        resolved,
+        "a refused creation never reaches the backend"
+    );
     // Another user is unaffected.
     api.create("bob").await;
     // Cancelling one frees a slot.
@@ -884,6 +890,53 @@ async fn eleventh_download_is_rejected() {
     assert_eq!(status, 201, "{json}");
     let h = api.dd().stats.history();
     assert_eq!(h[0].outcome, Outcome::Cancelled);
+}
+
+#[tokio::test]
+async fn creation_is_rate_limited_per_user() {
+    let api = Api::start(KIB, &[]).await;
+    let jwt = download_jwt("alice");
+    let body = json!({ "backend": "jellyfin", "item_id": ITEM });
+    // A client looping on create: the first 10 get a slot, the rest of the burst is
+    // refused by the slot pre-check, then the creation rate limit stops it.
+    let mut codes = HashMap::new();
+    for _ in 0..flicksync::dd::CREATE_PER_MINUTE {
+        let (status, j) = api.post_create(&jwt, body.clone()).await;
+        let code = j["error"]["code"].as_str().unwrap_or("CREATED").to_owned();
+        *codes.entry((status, code)).or_insert(0) += 1;
+    }
+    assert_eq!(codes.get(&(201, "CREATED".into())), Some(&10), "{codes:?}");
+    assert_eq!(
+        codes.get(&(429, "TOO_MANY_DOWNLOADS".into())),
+        Some(&20),
+        "{codes:?}"
+    );
+    assert_eq!(
+        api.fake.metadata_requests(),
+        10,
+        "one resolve per granted slot"
+    );
+
+    let resp = api
+        .http
+        .post(api.url("/api/v1/downloads"))
+        .bearer_auth(&jwt)
+        .body(body.to_string())
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status().as_u16(), 429);
+    let retry: u64 = header(&resp, "retry-after").unwrap().parse().unwrap();
+    assert!((1..=60).contains(&retry), "{retry}");
+    let (_, j) = json_of(resp).await;
+    assert_eq!(j["error"]["code"], "RATE_LIMITED");
+    assert_eq!(api.fake.metadata_requests(), 10);
+    let rejected = api.dd().stats.snapshot(now_ms()).rejected;
+    assert_eq!(rejected.get("create"), Some(&1), "{rejected:?}");
+    assert_eq!(rejected.get("slots"), Some(&20), "{rejected:?}");
+
+    // Another user has its own budget.
+    api.create("bob").await;
 }
 
 #[tokio::test]

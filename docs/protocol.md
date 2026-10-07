@@ -355,6 +355,7 @@ connections alive through proxies with idle timeouts.
 | Chat rate per participant | 1/s, burst 5 | `RATE_LIMITED` |
 | Chat message length / history | 500 chars / 100 messages | `MESSAGE_TOO_LARGE` / oldest dropped |
 | Room creation per user | 6/min | `429 RATE_LIMITED` |
+| FlickDD download creation per user | 30/min | `429 RATE_LIMITED` with `Retry-After` |
 | Participants per room | 100 | `409 ROOM_FULL` |
 | Rooms per instance | 10 000 | `429 TOO_MANY_ROOMS` |
 | WebSocket connections per instance | 10 000 | `503 TOO_MANY_CONNECTIONS` |

@@ -179,8 +179,8 @@ Same token rules. `204 No Content`: the stream is closed and the slot is freed. 
 | 404 | `DOWNLOAD_NOT_FOUND` | Unknown id, **wrong token** (same answer on purpose), expired, completed, cancelled or **over-served** grant; on create: the item does not exist on the backend, or FlickDD is disabled | On a token route: create a new grant and resume (section 5). On create: the item is gone or downloads are off: stop. |
 | 409 | `SOURCE_CHANGED` | The file changed on Jellyfin / Plex since the grant was created | Delete the partial file and restart from byte 0 with a new grant. |
 | 416 | `RANGE_NOT_SATISFIABLE` | Start at or past the end, reversed range, multiple ranges | Offset at or past `size`: verify and finish. Otherwise fix the request. |
-| 429 | `TOO_MANY_DOWNLOADS` | The user holds 10 grants (`FLICKDD_MAX_PARALLEL`), or the server holds 100 (`FLICKDD_MAX_GLOBAL`) | Wait and retry creation later. It is not a failure. No `Retry-After` is sent. |
-| 429 | `RATE_LIMITED` | More than 120 file requests per minute on one grant (`FLICKDD_MAX_REQUESTS_PER_MIN`) | Wait for `Retry-After` (seconds), then retry. |
+| 429 | `TOO_MANY_DOWNLOADS` | The user holds 10 grants (`FLICKDD_MAX_PARALLEL`), or the server holds 100 (`FLICKDD_MAX_GLOBAL`). Checked before the backend is asked | Wait and retry creation later. It is not a failure. No `Retry-After` is sent. |
+| 429 | `RATE_LIMITED` | Token routes: more than 120 file requests per minute on one grant (`FLICKDD_MAX_REQUESTS_PER_MIN`). Create: more than 30 creation attempts per minute by the user (all devices, refused attempts included) | Wait for `Retry-After` (seconds), then retry. |
 | 429 | `QUOTA_EXCEEDED` | The grant has already served its allowance (see below) | Do not retry on this grant: create a new one and resume. |
 | 502 | `BACKEND_UNAVAILABLE` | Jellyfin / Plex did not answer or failed. The message is always the generic "the media backend is unavailable"; the detail stays in the server logs | Retry with backoff. |
 | 503 | `BACKEND_UNAVAILABLE` | That backend is not configured on this server ("this media backend is not configured") | Stop for this backend. |

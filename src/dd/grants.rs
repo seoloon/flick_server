@@ -232,13 +232,9 @@ impl Grants {
         self.inner.lock().unwrap_or_else(|e| e.into_inner())
     }
 
-    /// Open a grant, taking one slot of the user and one of the server.
-    /// An empty file is refused: a zero-byte grant has no valid range to serve.
-    pub fn create(&self, new: NewGrant, now_ms: u64) -> Result<Created, Error> {
-        if new.file.size == 0 {
-            return Err(Error::new(ErrorCode::InvalidPayload, "empty file"));
-        }
-        let mut inner = self.lock();
+    /// `TooManyDownloads` (and the matching rejection counted) unless the server and
+    /// `user_id` each have a free slot.
+    fn admit(&self, inner: &Inner, user_id: &str) -> Result<(), Error> {
         if inner.grants.len() >= self.cfg.max_global {
             self.stats.record_rejected("global");
             return Err(Error::new(
@@ -246,7 +242,7 @@ impl Grants {
                 "the server has too many downloads in progress",
             ));
         }
-        let held = inner.per_user.get(&new.user_id).copied().unwrap_or(0);
+        let held = inner.per_user.get(user_id).copied().unwrap_or(0);
         if held >= self.cfg.max_parallel {
             self.stats.record_rejected("slots");
             return Err(Error::new(
@@ -254,6 +250,23 @@ impl Grants {
                 format!("at most {} downloads in progress", self.cfg.max_parallel),
             ));
         }
+        Ok(())
+    }
+
+    /// Pre-check of [`Grants::create`]'s slot limits, without taking a slot: lets the
+    /// create route refuse before it asks the backend anything. `create` checks again.
+    pub fn check_slots(&self, user_id: &str) -> Result<(), Error> {
+        self.admit(&self.lock(), user_id)
+    }
+
+    /// Open a grant, taking one slot of the user and one of the server.
+    /// An empty file is refused: a zero-byte grant has no valid range to serve.
+    pub fn create(&self, new: NewGrant, now_ms: u64) -> Result<Created, Error> {
+        if new.file.size == 0 {
+            return Err(Error::new(ErrorCode::InvalidPayload, "empty file"));
+        }
+        let mut inner = self.lock();
+        self.admit(&inner, &new.user_id)?;
         let id = loop {
             let id = random_b64(16);
             if !inner.grants.contains_key(&id) {
@@ -579,6 +592,31 @@ mod tests {
             g.create(new("carol", "c1"), 0).unwrap_err().code,
             ErrorCode::TooManyDownloads
         ); // global 3
+    }
+
+    #[test]
+    fn slot_pre_check_matches_create_and_takes_nothing() {
+        let (g, stats) = grants(2, 3);
+        g.check_slots("alice").unwrap();
+        g.check_slots("alice").unwrap(); // a check is not a reservation
+        g.create(new("alice", "a1"), 0).unwrap();
+        g.create(new("alice", "a2"), 0).unwrap();
+        assert_eq!(
+            g.check_slots("alice").unwrap_err().code,
+            ErrorCode::TooManyDownloads
+        );
+        g.check_slots("bob").unwrap();
+        g.create(new("bob", "b1"), 0).unwrap();
+        assert_eq!(
+            g.check_slots("carol").unwrap_err().code,
+            ErrorCode::TooManyDownloads
+        ); // global 3
+        assert_eq!(g.count(), 3);
+        let rejected = stats.snapshot(0).rejected;
+        assert_eq!(
+            (rejected.get("slots"), rejected.get("global")),
+            (Some(&1), Some(&1))
+        );
     }
 
     #[test]
