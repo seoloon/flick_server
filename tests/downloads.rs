@@ -1118,6 +1118,38 @@ async fn preemption() {
 }
 
 #[tokio::test]
+async fn shutdown_cuts_streams_and_refuses_new_work() {
+    let api = Api::start(8 * MIB, &[("FLICKDD_RATE_MBPS", "1")]).await;
+    let g = api.create("alice").await;
+    let resp = api.file(&g).send().await.unwrap(); // 8 s at 1 MiB/s
+    assert_eq!(resp.status().as_u16(), 200);
+    let dd = api.dd();
+    assert_eq!(dd.shutdown(), 1);
+    let t = Instant::now();
+    let (got, _) = read_until_end(resp).await;
+    assert!((got.len() as u64) < 8 * MIB, "{} bytes", got.len());
+    assert!(t.elapsed() < Duration::from_secs(2), "{:?}", t.elapsed());
+    eventually("upstream released", || api.fake.open_bodies() == 0).await;
+
+    let (status, j) = api
+        .post_create(
+            &download_jwt("bob"),
+            json!({ "backend": "jellyfin", "item_id": ITEM }),
+        )
+        .await;
+    assert_eq!((status, &j["error"]["code"]), (500, &json!("INTERNAL")));
+    let resp = api
+        .file(&g)
+        .header("range", "bytes=0-9")
+        .send()
+        .await
+        .unwrap();
+    let (status, j) = json_of(resp).await;
+    assert_eq!((status, &j["error"]["code"]), (500, &json!("INTERNAL")));
+    assert_eq!(api.fake.requests(), 1, "no new upstream request");
+}
+
+#[tokio::test]
 async fn source_changed_gives_409() {
     let api = Api::start(64 * KIB, &[]).await;
     let g = api.create("alice").await;

@@ -63,6 +63,12 @@ impl DdState {
             .retain(|_, b| !b.is_idle(now));
     }
 
+    /// Server shutdown: cut every running download stream and refuse new grants and new
+    /// streams (see [`Grants::shutdown`]). Returns the number of streams cut.
+    pub fn shutdown(&self) -> usize {
+        self.grants.shutdown()
+    }
+
     /// Take one creation token of `user_key` at `now` (monotonic ms, see
     /// [`DdState::now_mono_ms`]). Refused with `RateLimited` and a `Retry-After` hint.
     pub fn admit_create(&self, user_key: &str, now: u64) -> Result<(), GrantError> {

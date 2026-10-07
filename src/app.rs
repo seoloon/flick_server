@@ -115,11 +115,17 @@ pub async fn serve(cfg: Config) -> Result<(), Box<dyn std::error::Error>> {
     );
 
     let manager = state.manager.clone();
+    let dd = state.dd.clone();
     let server = axum::serve(listener, app).with_graceful_shutdown(async move {
         shutdown_signal().await;
         info!("shutdown signal received");
         // Close rooms and sockets first, otherwise open WebSockets would hold shutdown up.
         manager.shutdown();
+        // Same for download streams: a throttled file response can last hours.
+        if let Some(dd) = &dd {
+            let cut = dd.shutdown();
+            info!(streams = cut, "FlickDD download streams stopped");
+        }
     });
 
     tokio::select! {

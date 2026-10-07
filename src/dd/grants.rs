@@ -197,6 +197,8 @@ impl Grant {
 struct Inner {
     grants: HashMap<String, Grant>,
     per_user: HashMap<String, usize>,
+    /// Set by [`Grants::shutdown`]: no new grant, no new stream.
+    closed: bool,
 }
 
 pub struct Grants {
@@ -219,6 +221,10 @@ fn not_found() -> Error {
     Error::new(ErrorCode::DownloadNotFound, "download not found")
 }
 
+fn shutting_down() -> Error {
+    Error::new(ErrorCode::Internal, "server is shutting down")
+}
+
 impl Grants {
     pub fn new(cfg: Arc<DdConfig>, stats: Arc<Stats>) -> Self {
         Self {
@@ -235,6 +241,9 @@ impl Grants {
     /// `TooManyDownloads` (and the matching rejection counted) unless the server and
     /// `user_id` each have a free slot.
     fn admit(&self, inner: &Inner, user_id: &str) -> Result<(), Error> {
+        if inner.closed {
+            return Err(shutting_down());
+        }
         if inner.grants.len() >= self.cfg.max_global {
             self.stats.record_rejected("global");
             return Err(Error::new(
@@ -331,6 +340,9 @@ impl Grants {
     /// current stream (if any) and install the new one.
     pub fn begin_segment(&self, id: &str, now_ms: u64) -> Result<Segment, GrantError> {
         let mut inner = self.lock();
+        if inner.closed {
+            return Err(shutting_down().into());
+        }
         let g = inner.grants.get_mut(id).ok_or_else(not_found)?;
         while g
             .req_times
@@ -447,6 +459,22 @@ impl Grants {
     pub fn fail_source_changed(&self, id: &str, now_ms: u64) {
         let mut inner = self.lock();
         self.finish(&mut inner, id, Outcome::SourceChanged, now_ms);
+    }
+
+    /// Server shutdown: stop every running stream and refuse new grants and new streams, so
+    /// that open downloads do not hold the graceful shutdown up. Grants are left as they
+    /// are (they live in memory and go away with the process). Returns the streams stopped.
+    pub fn shutdown(&self) -> usize {
+        let mut inner = self.lock();
+        inner.closed = true;
+        let mut stopped = 0;
+        for g in inner.grants.values_mut() {
+            if let Some((_, tx)) = g.active.take() {
+                tx.send_replace(Cancel::Preempted);
+                stopped += 1;
+            }
+        }
+        stopped
     }
 
     /// Expire grants idle for longer than the TTL or older than the max age.
@@ -754,6 +782,36 @@ mod tests {
         assert_eq!(stats.history()[0].outcome, Outcome::Expired);
         assert!(g.inner.lock().unwrap().per_user.is_empty());
         g.create(new("alice", "a2"), 2).unwrap(); // slot is free again
+    }
+
+    #[test]
+    fn shutdown_stops_every_stream_and_refuses_new_work() {
+        let (g, _s) = grants(2, 3);
+        let a = g.create(new("alice", "a1"), 0).unwrap();
+        let b = g.create(new("bob", "b1"), 0).unwrap();
+        let idle = g.create(new("carol", "c1"), 0).unwrap();
+        let sa = g.begin_segment(&a.id, 1).unwrap();
+        let sb = g.begin_segment(&b.id, 1).unwrap();
+        assert_eq!(g.shutdown(), 2);
+        assert_eq!(*sa.cancel.borrow(), Cancel::Preempted);
+        assert_eq!(*sb.cancel.borrow(), Cancel::Preempted);
+        assert!(g.active_views(2).iter().all(|v| !v.streaming));
+        assert_eq!(
+            g.create(new("dave", "d1"), 2).unwrap_err().code,
+            ErrorCode::Internal
+        );
+        assert_eq!(g.check_slots("dave").unwrap_err().code, ErrorCode::Internal);
+        assert_eq!(
+            g.begin_segment(&idle.id, 2).unwrap_err().error.code,
+            ErrorCode::Internal
+        );
+        // Late bookkeeping of the stopped streams stays harmless.
+        assert_eq!(
+            g.record_progress(&a.id, sa.epoch, 0, 10, 3),
+            Progress::Continue
+        );
+        g.end_segment(&a.id, sa.epoch);
+        assert_eq!(g.count(), 3);
     }
 
     #[test]
