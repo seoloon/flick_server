@@ -143,7 +143,8 @@ fn etag_for(kind: BackendKind, id: &str, size: u64, source: &str) -> String {
     format!("\"{hex}\"")
 }
 
-/// Common tail of `resolve`: filename/mime fallbacks, empty-file guard, etag.
+/// Common tail of `resolve`: filename/mime fallbacks, etag. A zero size is passed through:
+/// `Grants::create` refuses it with a 400.
 fn resolved(
     kind: BackendKind,
     id: &str,
@@ -154,9 +155,6 @@ fn resolved(
     path: String,
 ) -> Result<ResolvedFile, BackendError> {
     let size = size.ok_or_else(|| unavailable("the backend reports no file size"))?;
-    if size == 0 {
-        return Err(unavailable("empty file"));
-    }
     let container = container.unwrap_or_default();
     let first = container.split(',').next().unwrap_or("").trim();
     let filename = file_path.as_deref().and_then(file_name).unwrap_or_else(|| {
@@ -399,7 +397,7 @@ mod tests {
     }
 
     #[test]
-    fn resolved_falls_back_to_id_dot_container_and_rejects_empty_files() {
+    fn resolved_falls_back_to_id_dot_container_and_passes_empty_files_through() {
         let f = resolved(
             BackendKind::Jellyfin,
             "abc",
@@ -414,18 +412,17 @@ mod tests {
             (f.filename.as_str(), f.mime.as_str()),
             ("abc.mkv", "video/x-matroska")
         );
-        assert!(matches!(
-            resolved(
-                BackendKind::Plex,
-                "a",
-                Some(0),
-                None,
-                None,
-                String::new(),
-                "/p".into()
-            ),
-            Err(BackendError::Unavailable(_))
-        ));
+        let empty = resolved(
+            BackendKind::Plex,
+            "a",
+            Some(0),
+            None,
+            None,
+            String::new(),
+            "/p".into(),
+        )
+        .unwrap();
+        assert_eq!(empty.size, 0);
         assert!(matches!(
             resolved(
                 BackendKind::Plex,
@@ -483,5 +480,19 @@ mod tests {
             assert_eq!(url.port(), Some(32400), "{key}");
             assert_eq!(url.username(), "", "{key}");
         }
+    }
+
+    #[tokio::test]
+    async fn transport_errors_do_not_carry_the_url_or_its_secrets() {
+        // Nothing listens on port 1: the connect error would normally print the URL.
+        let b = Backends::new(&DdConfig::from_lookup(&|_| None).unwrap());
+        let rb = b
+            .client
+            .get("http://127.0.0.1:1/library?X-Plex-Token=SECRETVALUE&api_key=SECRETVALUE");
+        let Err(BackendError::Unavailable(detail)) = b.send(rb).await else {
+            panic!("expected a transport error");
+        };
+        assert!(!detail.contains("SECRETVALUE"), "{detail}");
+        assert!(!detail.contains("127.0.0.1:1/"), "{detail}");
     }
 }

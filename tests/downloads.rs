@@ -97,10 +97,8 @@ async fn resolve_errors_unknown_item_bad_credentials_empty_file_unconfigured() {
 
     fake.knobs.size.store(0, Ordering::SeqCst);
     for kind in BackendKind::ALL {
-        assert!(matches!(
-            b.resolve(kind, ITEM).await,
-            Err(BackendError::Unavailable(_))
-        ));
+        // Resolved as is: `Grants::create` refuses the empty file with a 400.
+        assert_eq!(b.resolve(kind, ITEM).await.unwrap().size, 0);
     }
 
     let mut vars: HashMap<String, String> = fake.env().into_iter().collect();
@@ -1003,17 +1001,6 @@ async fn backend_errors_are_mapped_without_leaking_details() {
         (status, &j["error"]["code"]),
         (404, &json!("DOWNLOAD_NOT_FOUND"))
     );
-    // An empty file is refused by the backend layer: a generic 502, no inner detail.
-    api.fake.knobs.size.store(0, Ordering::SeqCst);
-    let (status, j) = api
-        .post_create(&jwt, json!({ "backend": "jellyfin", "item_id": ITEM }))
-        .await;
-    assert_eq!(
-        (status, &j["error"]["code"]),
-        (502, &json!("BACKEND_UNAVAILABLE"))
-    );
-    assert_eq!(j["error"]["message"], "the media backend is unavailable");
-
     // Only Jellyfin configured: Plex is 503.
     let only_jf = enabled_server(&api.fake, &[]).await;
     let resp = reqwest::Client::new()
@@ -1027,6 +1014,22 @@ async fn backend_errors_are_mapped_without_leaking_details() {
     assert_eq!(
         (status, &j["error"]["code"]),
         (503, &json!("BACKEND_UNAVAILABLE"))
+    );
+}
+
+#[tokio::test]
+async fn an_empty_file_is_refused_with_400() {
+    let api = Api::start(KIB, &[]).await;
+    api.fake.knobs.size.store(0, Ordering::SeqCst);
+    let (status, j) = api
+        .post_create(
+            &download_jwt("alice"),
+            json!({ "backend": "jellyfin", "item_id": ITEM }),
+        )
+        .await;
+    assert_eq!(
+        (status, &j["error"]["code"], &j["error"]["message"]),
+        (400, &json!("INVALID_PAYLOAD"), &json!("empty file"))
     );
 }
 
