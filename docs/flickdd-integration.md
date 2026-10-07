@@ -443,21 +443,21 @@ class DownloadManager {
         await sink.write(value); i.offset += value.length; got += value.length; i.fails = i.changes = 0; await this.store.save(i); }   // write, then save
         await sink.sync(); } finally { await sink.close(); }
       if (got < want) throw new Error("body cut short");                                    // normal: loop resumes at i.offset
-    } finally { clearTimeout(timer); outer.removeEventListener("abort", onAbort); }
+    } finally { clearTimeout(timer); outer.removeEventListener("abort", onAbort); ctl.abort(); }   // never drain an unwanted body (a 200 is the whole file)
   }
   private async onError(i: Item, e: any) {
     const s = e instanceof HttpError ? e.status : 0, code = e?.code;
     if (code === "TOO_MANY_DOWNLOADS") { await sleep(backoff(Math.min(i.fails + 3, 6))); return; }       // queueing: not a failure
     if (s === 403 || s === 400 || (s === 404 && !i.grant)) { i.state = "failed"; return; }               // 404 on create: item gone / FlickDD off
-    if (s === 409) { await this.fs.remove(i.tempPath).catch(() => {}); i.offset = 0; i.grant = undefined; i.last = undefined;
+    if (s === 409) { await this.release(i); await this.fs.remove(i.tempPath).catch(() => {}); i.offset = 0; i.last = undefined;  // a synthesized 409 leaves the grant alive
       if (++i.changes >= this.maxChanges) { i.state = "failed"; return; } }                              // never stable: stop
     if (s === 401 || s === 404 || code === "QUOTA_EXCEEDED") i.grant = undefined;                      // recreate; create() compares size/etag
-    if (s === 416) { if (i.grant && i.offset >= i.grant.size) return; i.grant = undefined; }           // at the end: finish()
+    if (s === 416) { if (i.grant && i.offset >= i.grant.size) return; await this.release(i); }        // at the end: finish()
     if (++i.fails >= this.giveUp) { i.state = "paused"; await this.release(i); return; }              // soft give-up; recreates count too
     await this.net.online(); await sleep(Math.max(backoff(i.fails), (e.retryAfter ?? 0) * 1000));
   }
   private async finish(i: Item) {
-    if (await this.fs.size(i.tempPath) !== i.grant!.size) { i.offset = 0; i.grant = undefined; return; }  // wrong size: restart
+    if (await this.fs.size(i.tempPath) !== i.grant!.size) { i.offset = 0; await this.release(i); return; }  // wrong size: restart
     await this.fs.rename(i.tempPath, i.finalPath); i.state = "done"; await this.release(i);
   }
   private async release(i: Item) {                                  // free the slot; best effort and idempotent
@@ -471,7 +471,10 @@ Notes on the reference: `create()` keeps the previous grant's `{size, etag}` in 
 `401/404` compares the new file identity with the old one, as section 5 requires. Every path that drops the grant
 to recreate it goes through the counted failure and its backoff (`onError` falls through to `++i.fails`), so a broken
 item never loops on `create`; `changes` fails the item after 3 `SOURCE_CHANGED` in a row without a received byte. `finish()` and `release()` both
-tolerate a grant the server already completed (`404` is ignored). Persist each `Item` with your `Store` (the token
+tolerate a grant the server already completed (`404` is ignored). Whenever the client drops a grant that may still be
+alive on the server (a synthesized `409` after a `200` or a wrong `Content-Range`, a `416`, a wrong final size), it
+`release()`s it first, so the old grant does not hold one of the user's slots until it expires. `segment()` aborts its
+request in `finally`: an unexpected `200` carries the whole file, and the body is not read to its end. Persist each `Item` with your `Store` (the token
 inside `grant` included, in app-private storage); on `start()`, items found in state `active` are simply re-run by
 `pump()`, and a stale saved grant is recovered by the `401/404` rule.
 
