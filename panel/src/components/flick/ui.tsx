@@ -278,6 +278,38 @@ export function Segmented<T extends string>({
   );
 }
 
+// ---------------------------------------------------------------- Switch
+
+/** On / off switch (the design system's `.fk-switch`). */
+export function Switch({
+  id,
+  checked,
+  onChange,
+  label,
+  disabled,
+}: {
+  id?: string;
+  checked: boolean;
+  onChange: (on: boolean) => void;
+  label: string;
+  disabled?: boolean;
+}) {
+  return (
+    <button
+      id={id}
+      type="button"
+      role="switch"
+      aria-checked={checked}
+      aria-label={label}
+      disabled={disabled}
+      className="fk-switch"
+      onClick={() => onChange(!checked)}
+    >
+      <span className="fk-switch__thumb" />
+    </button>
+  );
+}
+
 // ---------------------------------------------------------------- TextField
 
 export function TextField({

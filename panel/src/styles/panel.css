@@ -133,3 +133,27 @@ a.fk-btn { text-decoration: none; }
 /* ---------- Modules ---------- */
 .pill-row { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem; }
 .muted { margin: 0; color: var(--muted-foreground); font-size: 0.875rem; line-height: 1.6; }
+
+/* ---------- Settings ---------- */
+a.fk-seg__item { display: inline-flex; align-items: center; text-decoration: none; }
+.fk-seg__item[aria-current="page"] { color: #fff; background: rgb(255 255 255 / 0.18); }
+.settings-list { display: flex; flex-direction: column; }
+.setting { display: grid; grid-template-columns: minmax(0, 1fr) minmax(14rem, 24rem); align-items: center; gap: 0.5rem 1.5rem; border-top: 1px solid var(--hairline); border-radius: var(--radius-xl); padding: 0.875rem 1rem; }
+.setting:first-child { border-top: 0; }
+.setting[data-changed] { background: var(--hover); }
+.setting[data-flagged] { box-shadow: inset 3px 0 0 var(--error); }
+.setting__text { display: flex; min-width: 0; flex-direction: column; gap: 0.125rem; }
+.setting__label { font-size: 0.9375rem; font-weight: 500; }
+.setting__name { font-family: var(--font-mono); font-size: 0.75rem; color: var(--subtle); overflow-wrap: anywhere; }
+.setting__hint { font-size: 0.8125rem; line-height: 1.4; color: var(--muted-foreground); }
+.setting__control { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 0.5rem; }
+.setting__input { flex: 1; min-width: 0; height: 2.5rem; }
+select.setting__input option { background: var(--background); color: #fff; }
+.save-bar { position: sticky; bottom: 1rem; z-index: 4; display: flex; flex-direction: column; gap: 0.75rem; border-radius: var(--radius-2xl); padding: 0.75rem 1rem; }
+.save-bar__row { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 0.75rem; }
+.notice-text { margin: 0 0 0.75rem; }
+
+@media (max-width: 60rem) {
+  .setting { grid-template-columns: minmax(0, 1fr); }
+  .setting__control { justify-content: flex-start; }
+}
