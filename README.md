@@ -100,6 +100,8 @@ PANEL_PASSWORD=<10+ characters>
 FLICKSYNC_ADMIN_TOKEN=<16+ characters>
 ```
 
+Upgrading an existing install? See [Upgrading to panel-managed settings](docs/deployment.md#upgrading-to-panel-managed-settings).
+
 Using Dokploy, Coolify, a reverse proxy or no Docker at all? See
 **[TECHNICAL.md](TECHNICAL.md)** and the [deployment guide](docs/deployment.md).
 

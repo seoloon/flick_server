@@ -394,6 +394,7 @@ Malformed input never terminates a connection by itself: it produces an `error` 
 | `QUOTA_EXCEEDED` | 429 | FlickDD: the download already served its allowance (`size x FLICKDD_MAX_OVERSERVE`). Create a new one. |
 | `SOURCE_CHANGED` | 409 | FlickDD: the file changed on the media server since the download was created. Start over. |
 | `RANGE_NOT_SATISFIABLE` | 416 | FlickDD: the requested byte range is outside the file, reversed, or has several parts. |
+| `MODULE_DISABLED` | 503 | The module behind this route is stopped on the server (enabled from the admin panel). |
 | `BACKEND_UNAVAILABLE` | 502 / 503 | FlickDD: Jellyfin / Plex failed or did not answer (502), or that backend is not configured (503). |
 | `TOO_MANY_CONNECTIONS` | 503 | Instance connection cap reached / shutting down. |
 | `INTERNAL` | 500 | Unexpected server condition (details are only in the server logs). |

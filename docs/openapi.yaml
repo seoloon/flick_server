@@ -62,6 +62,7 @@ paths:
         "401": { $ref: "#/components/responses/Error" }
         "403": { $ref: "#/components/responses/Error" }
         "429": { $ref: "#/components/responses/Error" }
+        "503": { description: MODULE_DISABLED, content: { application/json: { schema: { $ref: "#/components/schemas/ErrorBody" } } } }
   /api/v1/rooms/{room_id}:
     parameters: [{ $ref: "#/components/parameters/RoomId" }]
     get:
@@ -74,6 +75,7 @@ paths:
           content: { application/json: { schema: { $ref: "#/components/schemas/RoomView" } } }
         "401": { $ref: "#/components/responses/Error" }
         "403": { description: Not a member, content: { application/json: { schema: { $ref: "#/components/schemas/ErrorBody" } } } }
+        "503": { description: MODULE_DISABLED, content: { application/json: { schema: { $ref: "#/components/schemas/ErrorBody" } } } }
         "404": { $ref: "#/components/responses/Error" }
   /api/v1/rooms/{room_id}/join:
     parameters: [{ $ref: "#/components/parameters/RoomId" }]
@@ -91,6 +93,7 @@ paths:
         "404": { $ref: "#/components/responses/Error" }
         "409": { description: Room full, content: { application/json: { schema: { $ref: "#/components/schemas/ErrorBody" } } } }
         "410": { $ref: "#/components/responses/Error" }
+        "503": { description: MODULE_DISABLED, content: { application/json: { schema: { $ref: "#/components/schemas/ErrorBody" } } } }
   /api/v1/rooms/{room_id}/leave:
     parameters: [{ $ref: "#/components/parameters/RoomId" }]
     post:
@@ -102,6 +105,7 @@ paths:
         "401": { $ref: "#/components/responses/Error" }
         "403": { $ref: "#/components/responses/Error" }
         "404": { $ref: "#/components/responses/Error" }
+        "503": { description: MODULE_DISABLED, content: { application/json: { schema: { $ref: "#/components/schemas/ErrorBody" } } } }
   /api/v1/rooms/{room_id}/ws:
     parameters: [{ $ref: "#/components/parameters/RoomId" }]
     get:
@@ -245,7 +249,7 @@ components:
         error:
           type: object
           properties:
-            code: { type: string, example: ROOM_NOT_FOUND }
+            code: { type: string, example: ROOM_NOT_FOUND, description: "Includes MODULE_DISABLED (503): the module behind the route is stopped" }
             message: { type: string }
     ControlMode: { type: string, enum: [everyone, host_only] }
     RoomAccess:

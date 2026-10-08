@@ -60,7 +60,7 @@ pub struct HttpConfig {
     pub allowed_origins: Vec<String>,
     pub metrics_enabled: bool,
     pub metrics_token: Option<String>,
-    /// Bearer token of the admin API (`/admin/v1/*`); `None` = admin API disabled (404).
+    /// Deprecated legacy bearer token of the admin API; the current one is derived from `PANEL_PASSWORD`.
     pub admin_token: Option<String>,
     pub panel_password: Option<String>,
     pub max_body_bytes: usize,

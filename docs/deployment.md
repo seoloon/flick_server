@@ -190,6 +190,17 @@ sync.example.com {
 }
 ```
 
+## Upgrading to panel-managed settings
+
+* Settings are stored in `/data/settings.json` (the volume already mounted). Stored values beat the environment.
+* Modules are **off by default**. To keep an existing install running, set `FLICKSYNC_ENABLED=true` (and keep
+  `FLICKDD_ENABLED=true` if used) once, or enable the modules from the panel.
+* `FLICKSYNC_ADMIN_TOKEN` is replaced by `PANEL_PASSWORD` (the token is derived from it, see
+  [admin-api.md](admin-api.md)).
+* `/ready` reports whether the signing keys are loaded; it no longer turns `503` during graceful shutdown. An invalid
+  `FLICKSYNC_AUTH_KEYS` now exits with code 2 instead of 1.
+* Do not expose `/admin` through the reverse proxy.
+
 ## Operations
 
 - **Health**: `GET /health` (liveness), `GET /ready` (503 when shutting down or without keys).

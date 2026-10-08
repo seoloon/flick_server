@@ -1,29 +1,39 @@
 # Admin API
 
-Operator endpoints used by the [web panel](../panel/README.md). They are **off by default**: without
-`FLICKSYNC_ADMIN_TOKEN` every `/admin/v1/*` path answers `404`.
+Operator endpoints used by the [web panel](../panel/README.md). Disabled (`404`) unless `PANEL_PASSWORD` has 10+
+characters; the token is `hex(HMAC-SHA256(PANEL_PASSWORD, "flick-admin-api-v1"))`. The old `FLICKSYNC_ADMIN_TOKEN` still
+works and is deprecated.
 
-* Set `FLICKSYNC_ADMIN_TOKEN` (at least 16 characters, e.g. `openssl rand -base64 32`).
+* Password length is measured in bytes server-side, while the panel counts characters; `PANEL_PASSWORD` is trimmed
+  server-side, so derive the token from the trimmed value.
 * Every call needs `Authorization: Bearer <token>`, compared in constant time. Anything else is `401`
   (and counts in `auth_failures_total`).
 * Every response of every `/admin/v1/*` route is `Cache-Control: no-store`: successes, `204`s and errors alike. There is no CORS: call it from a server, never from a browser, and
   keep the token out of client code. The panel's server does exactly that.
 * One of these endpoints returns the invitation link, i.e. the signing key. Treat the token like the key.
+* Do not expose `/admin` through the reverse proxy.
 
 ## Endpoints
 
 | Method and path | Purpose |
 |---|---|
-| `GET /admin/v1/overview` | Version, uptime, readiness, rooms, participants, connections and their limits, average RTT |
+| `GET /admin/v1/overview` | Version, uptime, readiness, rooms, participants, connections and their limits, average RTT. While FlickSync is stopped `running` is false and the counters are zero |
 | `GET /admin/v1/invite` | The invitation link and how it was built |
-| `GET /admin/v1/rooms` | Every live room with participants and playback, newest first |
+| `GET /admin/v1/rooms` | (`503 MODULE_DISABLED` while FlickSync is stopped) Every live room with participants and playback, newest first |
 | `DELETE /admin/v1/rooms/{room_id}` | Force-close a room: `204`, or `404` when it does not exist (any id form is accepted) |
-| `GET /admin/v1/stats` | Counters, drift distribution and a rolling history |
+| `GET /admin/v1/stats` | (`503 MODULE_DISABLED` while FlickSync is stopped) Counters, drift distribution and a rolling history |
 | `GET /admin/v1/dd/overview` | FlickDD: enabled backends, limits, active count, headline totals |
 | `GET /admin/v1/dd/active` | FlickDD: downloads in progress |
 | `GET /admin/v1/dd/history` | FlickDD: recently finished downloads, newest first |
 | `GET /admin/v1/dd/stats` | FlickDD: totals, 30 daily buckets, top titles, splits by backend and outcome |
 | `DELETE /admin/v1/dd/{id}` | FlickDD: stop a download and free its slot |
+| `GET /admin/v1/modules` | State of each module: `stopped`, `running` or `failed` (with the reason), the persisted `enabled` switch, `pending_reload` |
+| `POST /admin/v1/modules/{id}/start` | Persist `enabled=true` and start (`flicksync` or `flickdd`) |
+| `POST /admin/v1/modules/{id}/stop` | Persist `enabled=false` and stop: rooms close, downloads are cut |
+| `POST /admin/v1/modules/{id}/reload` | Stop then start with the stored settings; a disabled module stays stopped |
+| `GET /admin/v1/settings/{server\|flicksync\|flickdd}` | Every editable setting with value, source (`panel`, `environment`, `default`), default; secrets only as `set` |
+| `PUT /admin/v1/settings/{scope}` | Partial update `{"values": {"NAME": value-or-null}}`; the result is validated as a whole, `400` and nothing written otherwise |
+| `POST /admin/v1/settings/server/reload` | Apply the server scope (keys, public address, CORS, metrics, log level) without restarting modules |
 
 ### `GET /admin/v1/invite`
 
@@ -93,6 +103,53 @@ Closing a room sends `room_closed` with `reason: "admin_closed"` to everyone in 
   values are cumulative counters or gauges; derive rates from consecutive samples.
 
 The same counters (plus `sync_seeks_total` and `sync_reports_total`) are available in Prometheus form on `/metrics`.
+
+## Modules and settings
+
+FlickSync and FlickDD are **off by default** and are started, stopped and configured at runtime. While a module is
+stopped its public routes stay mounted and answer `503 MODULE_DISABLED` (FlickSync's `/api/v1/rooms*`, for example);
+stopping closes rooms and cuts running downloads. Settings live in `/data/settings.json`; stored values beat the
+environment.
+
+### `GET /admin/v1/modules`
+
+```json
+{ "modules": [
+  { "id": "flicksync", "state": "running", "enabled": true, "pending_reload": false },
+  { "id": "flickdd", "state": "failed", "reason": "invalid value", "enabled": true, "pending_reload": false }
+] }
+```
+
+`state` is `stopped`, `running` or `failed`; `reason` is present when failed. `pending_reload` is true when stored
+settings changed since the module started.
+
+### `POST /admin/v1/modules/{id}/start`, `/stop`, `/reload`
+
+No body. Answer: the module's status object as above. `start` persists `enabled=true` first, `stop` persists
+`enabled=false`; both are idempotent. `reload` restarts with the stored settings and leaves a disabled module stopped.
+Errors: `404` for an unknown id, `400` when the stored settings are invalid, `401` without the token.
+
+### `GET /admin/v1/settings/{scope}`
+
+`scope` is `server`, `flicksync` or `flickdd`. Answer: every editable setting with its `value`, `source`
+(`panel`, `environment` or `default`) and `default`. Secrets are never returned, only whether they are `set`.
+Unknown scope: `404`.
+
+### `PUT /admin/v1/settings/{scope}`
+
+```json
+{ "values": { "FLICKSYNC_MAX_ROOMS": 200, "FLICKSYNC_METRICS_TOKEN": null } }
+```
+
+Partial update: a name with a value stores it, `null` removes the stored value (back to environment or default), an
+omitted name is untouched. The merged result is validated as a whole; on failure the answer is `400` with the reason
+and nothing is written. Answer on success: the new settings view. Changes to a running module show as
+`pending_reload` until it is reloaded.
+
+### `POST /admin/v1/settings/server/reload`
+
+Re-reads the server scope and applies it live: signing keys, public address, CORS origins, metrics and log level.
+Modules keep running. An invalid stored configuration answers `400` and the previous one stays active.
 
 ## FlickDD
 
