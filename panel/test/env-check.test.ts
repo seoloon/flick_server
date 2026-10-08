@@ -37,3 +37,12 @@ test("a legacy token is accepted with a deprecation note; a short one is refused
   assert.equal(short.problems.length, 1);
   assert.match(short.problems[0], /FLICKSYNC_ADMIN_TOKEN/);
 });
+
+test("the legacy token's 16 is counted in bytes, as on the server", () => {
+  const at = (token: string) => checkPanelEnv({ PANEL_PASSWORD: PW, FLICKSYNC_ADMIN_TOKEN: token }).problems.length;
+  assert.equal(at("0123456789abcde"), 1); // 15 bytes
+  assert.equal(at("0123456789abcdef"), 0); // 16 bytes
+  assert.equal(at("éééééééé"), 0); // 8 characters, 16 bytes
+  assert.equal(at("ééééééé1"), 1); // 8 characters, 15 bytes
+  assert.equal(at("  0123456789abcde  "), 1); // trimmed first
+});

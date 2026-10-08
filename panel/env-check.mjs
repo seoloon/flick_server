@@ -22,7 +22,8 @@ export function checkPanelEnv(env) {
     );
   }
   const legacy = String(env.FLICKSYNC_ADMIN_TOKEN ?? "").trim();
-  if (legacy && legacy.length < 16) {
+  // The server counts bytes, not characters: "é" is two of them.
+  if (legacy && Buffer.byteLength(legacy, "utf8") < 16) {
     problems.push(
       "FLICKSYNC_ADMIN_TOKEN is deprecated: remove it from .env, the admin token now comes from PANEL_PASSWORD. If you keep it, it must be at least 16 characters, as on the server.",
     );
