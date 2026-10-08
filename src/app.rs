@@ -49,7 +49,7 @@ pub enum StartError {
 /// The `message` of a module that failed to start: the reason, then what to do.
 fn failed_start(e: &ConfigError) -> String {
     format!(
-        "{} Fix this setting, then reload the module.",
+        "{} Fix this setting, then start the module again.",
         settings::explain(e)
     )
 }

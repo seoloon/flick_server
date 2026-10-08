@@ -119,7 +119,10 @@ export function SettingsForm({ scope }: { scope: SettingsScope }) {
               field={f}
               edits={edits}
               flagged={flagged.includes(f.name)}
-              onEdit={setEdits}
+              onEdit={(update) => {
+                setApplied(false);
+                setEdits(update);
+              }}
             />
           ))}
         </div>

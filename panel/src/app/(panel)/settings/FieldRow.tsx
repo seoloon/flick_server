@@ -140,7 +140,7 @@ export function FieldRow({
           {label}
         </label>
         <span className="setting__name">{field.name}</span>
-        <span className="setting__hint">{fieldHint(field, d)}</span>
+        {fieldHint(field, d) && <span className="setting__hint">{fieldHint(field, d)}</span>}
       </div>
       <div className="setting__control">
         {control}

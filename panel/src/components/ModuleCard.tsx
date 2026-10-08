@@ -1,6 +1,6 @@
 "use client";
 
-import { type ReactNode, useState } from "react";
+import { type ReactNode, useEffect, useState } from "react";
 
 import type { IconName } from "@/components/flick/icons";
 import { Button, ButtonLink, Dialog, Notice, Panel, Pill } from "@/components/flick/ui";
@@ -34,13 +34,16 @@ export function ModuleActionButton({
   const [asking, setAsking] = useState(false);
   const ask = confirmation(status, action);
   const running = control.busy?.id === status.id && control.busy.action === action;
-  const error = control.actionError?.id === status.id ? control.actionError.text : null;
+
+  // The module's state changed under an open dialog (a poll): the question no longer applies.
+  useEffect(() => {
+    if (!ask) setAsking(false);
+  }, [ask]);
 
   async function run() {
-    if (await control.act(status.id, action)) {
-      setAsking(false);
-      onDone?.();
-    }
+    const ok = await control.act(status.id, action);
+    setAsking(false); // a failure is shown once, on the card
+    if (ok) onDone?.();
   }
 
   return (
@@ -56,7 +59,6 @@ export function ModuleActionButton({
       </Button>
       {asking && ask && (
         <Dialog title={ask.title} description={ask.description} onClose={() => !running && setAsking(false)}>
-          {error && <Notice tone="error">{error}</Notice>}
           <div className="row-actions">
             <Button variant={ACTION_VARIANT[action]} icon={ACTION_ICON[action]} onClick={() => void run()} disabled={running}>
               {running ? ACTION_LABEL[action].busy : ask.confirm}

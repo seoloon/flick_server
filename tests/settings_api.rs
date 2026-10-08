@@ -428,7 +428,7 @@ async fn a_stopped_or_failed_module_is_explained_on_its_admin_routes() {
     let (_, m) = call(&s, Method::POST, "/admin/v1/modules/flickdd/start", None).await;
     let reason = m["message"].as_str().unwrap();
     assert!(reason.contains("FLICKDD_JELLYFIN_URL"), "{reason}");
-    assert!(reason.contains("reload"), "{reason}");
+    assert!(reason.contains("start the module again"), "{reason}");
     let (_, v) = call(&s, Method::GET, "/admin/v1/dd/overview", None).await;
     let message = v["error"]["message"].as_str().unwrap();
     assert!(message.contains("failed to start"), "{message}");

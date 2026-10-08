@@ -135,7 +135,8 @@ export function fieldHint(field: SettingField, d: FieldDisplay): string {
   }
   const parts: string[] = [];
   if (field.secret) {
-    parts.push(field.source === "default" ? "Not set" : SOURCE_LABEL[field.source]);
+    // An unset secret says "Not set" in its pill; no need to repeat it here.
+    if (field.source !== "default") parts.push(SOURCE_LABEL[field.source]);
     if (field.source === "environment") parts.push("a value saved here overrides it");
   } else {
     parts.push(SOURCE_LABEL[field.source]);

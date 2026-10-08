@@ -142,7 +142,7 @@ environment.
 ```json
 { "modules": [
   { "id": "flicksync", "state": "running", "message": null, "enabled": true, "pending_reload": false, "since": 1790959000000 },
-  { "id": "flickdd", "state": "failed", "message": "FlickDD needs at least one backend: set FLICKDD_JELLYFIN_URL and FLICKDD_JELLYFIN_API_KEY, or FLICKDD_PLEX_URL and FLICKDD_PLEX_TOKEN. Fix this setting, then reload the module.", "enabled": true, "pending_reload": false, "since": null }
+  { "id": "flickdd", "state": "failed", "message": "FlickDD needs at least one backend: set FLICKDD_JELLYFIN_URL and FLICKDD_JELLYFIN_API_KEY, or FLICKDD_PLEX_URL and FLICKDD_PLEX_TOKEN. Fix this setting, then start the module again.", "enabled": true, "pending_reload": false, "since": null }
 ] }
 ```
 

@@ -137,7 +137,7 @@ test("the hint says where a value comes from", () => {
   assert.equal(hint(byName("FLICKDD_JELLYFIN_URL")), "From the environment · default none");
   assert.equal(hint(byName("FLICKDD_JELLYFIN_API_KEY")), "From the environment · a value saved here overrides it");
   assert.equal(hint(byName("FLICKDD_PLEX_TOKEN")), "Saved in the panel");
-  assert.equal(hint(field({ name: "FLICKDD_PLEX_TOKEN", kind: "secret" })), "Not set");
+  assert.equal(hint(field({ name: "FLICKDD_PLEX_TOKEN", kind: "secret" })), "");
   assert.equal(
     hint(byName("FLICKDD_MAX_GLOBAL"), { FLICKDD_MAX_GLOBAL: null }),
     "Save removes the panel's value: the environment value applies, or the default (100).",
