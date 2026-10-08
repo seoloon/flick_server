@@ -170,12 +170,13 @@ To turn it on, add this to `.env` and redeploy:
 ```sh
 ENABLE_WEB_PANEL=true
 PANEL_PASSWORD=<10+ characters>        # openssl rand -base64 18
-FLICKSYNC_ADMIN_TOKEN=<16+ characters> # openssl rand -base64 32
 ```
 
-`FLICKSYNC_ADMIN_TOKEN` is a shared secret between the panel and FlickSync, so
-it must be the same on both. Without it FlickSync keeps its admin API switched
-off. The panel refuses to start with a weak password or token.
+`PANEL_PASSWORD` is the only secret: the panel and FlickSync both derive the
+admin API token from it, so both containers must read the same `.env` (the
+compose file does). Without it FlickSync keeps its admin API switched off. The
+panel refuses to start with a password under 10 characters.
+`FLICKSYNC_ADMIN_TOKEN` is deprecated and can be removed.
 
 It listens on port `3000`, or on the domain you gave it. Details and security
 model: [panel/README.md](panel/README.md). The API behind it:

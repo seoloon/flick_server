@@ -3,24 +3,17 @@
 //   ENABLE_WEB_PANEL=false (default)  -> log a line and exit 0: nothing listens on the port.
 //   ENABLE_WEB_PANEL=true             -> start the Next.js server on PORT (default 3000).
 //
-// Refuses to start without a real password: this panel can read the invitation (signing key)
-// and close rooms.
-const truthy = (v) => ["1", "true", "yes", "on"].includes(String(v ?? "").trim().toLowerCase());
+// Refuses to start without a real password: the panel signs in with it, derives the server's
+// admin token from it, and can then read the invitation (signing key) and stop modules.
+import { checkPanelEnv, panelEnabled } from "./env-check.mjs";
 
-if (!truthy(process.env.ENABLE_WEB_PANEL)) {
+if (!panelEnabled(process.env)) {
   console.log("Flick Panel is disabled (set ENABLE_WEB_PANEL=true to enable it).");
   process.exit(0);
 }
 
-const problems = [];
-if ((process.env.PANEL_PASSWORD ?? "").length < 10) {
-  problems.push("PANEL_PASSWORD must be set and at least 10 characters (e.g. `openssl rand -base64 18`).");
-}
-if ((process.env.FLICKSYNC_ADMIN_TOKEN ?? "").trim().length < 16) {
-  problems.push(
-    "FLICKSYNC_ADMIN_TOKEN must be set, at least 16 characters, and identical on FlickSync (e.g. `openssl rand -base64 32`).",
-  );
-}
+const { problems, notes } = checkPanelEnv(process.env);
+for (const note of notes) console.warn(`Flick Panel: ${note}`);
 if (problems.length) {
   console.error("Flick Panel cannot start:\n - " + problems.join("\n - "));
   process.exit(2);

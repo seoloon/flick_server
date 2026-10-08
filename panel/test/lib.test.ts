@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { adminError } from "../src/lib/admin-errors.ts";
+import { ADMIN_ERROR_TEXT, adminError } from "../src/lib/admin-errors.ts";
 import { AttemptLimiter } from "../src/lib/limiter.ts";
 import { createSessionToken, passwordMatches, verifySessionToken } from "../src/lib/session.ts";
 import {
@@ -111,4 +111,17 @@ test("an unknown code without a message still shows the code", () => {
   assert.match(adminError({ error: { code: "SOMETHING_NEW" } }).text, /SOMETHING_NEW/);
   assert.equal(adminError(null).code, "UNKNOWN");
   assert.equal(adminError("not json").code, "UNKNOWN");
+});
+
+test("the panel's own texts point to PANEL_PASSWORD, not to the old admin token", () => {
+  for (const code of ["ADMIN_TOKEN_MISSING", "ADMIN_API_DISABLED", "ADMIN_TOKEN_REJECTED"] as const) {
+    assert.match(ADMIN_ERROR_TEXT[code], /PANEL_PASSWORD/, code);
+  }
+  assert.doesNotMatch(ADMIN_ERROR_TEXT.ADMIN_TOKEN_MISSING, /FLICKSYNC_ADMIN_TOKEN/);
+  assert.doesNotMatch(ADMIN_ERROR_TEXT.ADMIN_API_DISABLED, /FLICKSYNC_ADMIN_TOKEN/);
+});
+
+test("the panel's route refusals have their own text", () => {
+  assert.match(adminError({ error: { code: "FORBIDDEN" } }).text, /this panel/);
+  assert.match(adminError({ error: { code: "NOT_FOUND" } }).text, /Reload the page/);
 });

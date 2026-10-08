@@ -29,6 +29,7 @@ COPY --from=panel-build /app/.next/standalone ./
 COPY --from=panel-build /app/.next/static ./.next/static
 COPY --from=panel-build /app/public ./public
 COPY --from=panel-build /app/start.mjs ./start.mjs
+COPY --from=panel-build /app/env-check.mjs ./env-check.mjs
 USER node
 EXPOSE 3000
 # No curl in the image: probe the login page with node itself.

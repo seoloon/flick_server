@@ -94,12 +94,11 @@ docker compose exec flick-modules flicksync invite
 The last command prints your invitation link. Paste it into Flick, and you
 are done.
 
-Want the panel? Add three lines to `.env`:
+Want the panel? Add two lines to `.env`:
 
 ```sh
 ENABLE_WEB_PANEL=true
 PANEL_PASSWORD=<10+ characters>
-FLICKSYNC_ADMIN_TOKEN=<16+ characters>
 ```
 
 Upgrading an existing install? See [Upgrading to panel-managed settings](docs/deployment.md#upgrading-to-panel-managed-settings).
