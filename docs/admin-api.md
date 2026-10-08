@@ -131,6 +131,10 @@ No body. Answer `200`: the module's status object as above. `start` persists `en
 Invalid stored settings are not an HTTP error: the answer is `200` with `state: "failed"` and the reason in `message`.
 A module that fails this way (FlickDD enabled without a backend, for instance) never affects the other module, the
 server scope or the next boot. Stopping or reloading FlickDD resets its stats and history.
+An unparseable `FLICKDD_ENABLED` in the environment (`perhaps`, say) counts as on: FlickDD is `failed` with a message
+naming the variable rather than silently `stopped`; `stop`, or a `PUT` of a valid value, stores a switch that wins
+over the environment. (An unparseable `FLICKSYNC_ENABLED` stops the process at boot, like any invalid shared setting.)
+A `PUT` never stores an unparseable switch.
 Errors: `404` for an unknown module id or action, `500 INTERNAL` when the settings file cannot be written, `401`
 without the token.
 

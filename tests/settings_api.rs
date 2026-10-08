@@ -356,6 +356,45 @@ async fn an_invalid_flickdd_environment_never_blocks_boot_or_other_scopes() {
 }
 
 #[tokio::test]
+async fn an_unparseable_flickdd_enabled_is_refused_and_writes_nothing() {
+    let s = server(&[]).await;
+    let before = s.state.settings.revision();
+    let (st, v) = call(
+        &s,
+        Method::PUT,
+        "/admin/v1/settings/flickdd",
+        Some(json!({"values": {"FLICKDD_ENABLED": "perhaps"}})),
+    )
+    .await;
+    assert_eq!(st, StatusCode::BAD_REQUEST, "{v}");
+    assert!(
+        v["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("FLICKDD_ENABLED"),
+        "{v}"
+    );
+    assert_eq!(s.state.settings.revision(), before, "nothing was written");
+    assert_eq!(s.state.settings.lookup("FLICKDD_ENABLED"), None);
+}
+
+#[tokio::test]
+async fn an_unparseable_flickdd_enabled_in_the_environment_fails_flickdd_by_name() {
+    let s = server(&[("FLICKDD_ENABLED", "perhaps")]).await;
+    let dd = s.state.module_status(flicksync::modules::ModuleId::FlickDd);
+    assert_eq!((dd.state, dd.enabled), ("failed", true), "{dd:?}");
+    assert!(dd.message.unwrap().contains("FLICKDD_ENABLED"));
+    assert!(s.state.sync().is_ok(), "FlickSync is unaffected");
+    // Stopping stores a valid switch, which then wins over the environment.
+    let (st, m) = call(&s, Method::POST, "/admin/v1/modules/flickdd/stop", None).await;
+    assert_eq!(
+        (st, m["state"].as_str(), m["enabled"].as_bool()),
+        (StatusCode::OK, Some("stopped"), Some(false)),
+        "{m}"
+    );
+}
+
+#[tokio::test]
 async fn the_server_scope_reloads_through_the_api() {
     let s = server(&[]).await;
     let (st, _) = call(

@@ -198,9 +198,11 @@ impl Settings {
         }
     }
 
+    /// The module's on/off switch. An unparseable value counts as "on": the module is then
+    /// started and fails with a message naming the variable, instead of silently staying off.
     pub fn is_enabled(&self, scope: Scope) -> bool {
         Self::enabled_var(scope)
-            .is_some_and(|name| parse_bool(&|k| self.lookup(k), name, false).unwrap_or(false))
+            .is_some_and(|name| parse_bool(&|k| self.lookup(k), name, false).unwrap_or(true))
     }
 
     fn commit(&self, guard: &mut Stored, mut next: Stored) -> Result<(), SettingsError> {
@@ -274,7 +276,8 @@ impl Settings {
                 Config::from_lookup(&look).map_err(|e| invalid(&e))?;
             }
             Scope::FlickDd => {
-                let enabled = parse_bool(&look, "FLICKDD_ENABLED", false).unwrap_or(false);
+                let enabled =
+                    parse_bool(&look, "FLICKDD_ENABLED", false).map_err(|e| invalid(&e))?;
                 DdConfig::check(&look, enabled).map_err(|e| invalid(&e))?;
             }
         }
@@ -505,5 +508,38 @@ mod tests {
         // `FLICKDD_ENABLED=true` in the environment is the fallback for an existing install.
         let legacy = Settings::in_memory(env_of(&[("FLICKDD_ENABLED", "true")]));
         assert!(legacy.is_enabled(Scope::FlickDd));
+    }
+
+    #[test]
+    fn an_unparseable_enabled_flag_is_refused_and_nothing_is_written() {
+        let dir = scratch_dir("settings-bad-flag");
+        let s = Settings::open(&dir, env_of(&[])).unwrap();
+        for (scope, name) in [
+            (Scope::FlickDd, "FLICKDD_ENABLED"),
+            (Scope::FlickSync, "FLICKSYNC_ENABLED"),
+        ] {
+            let err = s.put(scope, patch(&[(name, Some("perhaps"))])).unwrap_err();
+            assert!(matches!(err, SettingsError::Invalid(_)), "{name}: {err}");
+            assert!(err.to_string().contains(name), "{err}");
+            assert_eq!(s.lookup(name), None, "{name}");
+        }
+        assert_eq!(s.revision(), 0);
+        assert!(!store::path_in(&dir).exists());
+    }
+
+    #[test]
+    fn an_unparseable_enabled_flag_counts_as_enabled_so_the_start_reports_it() {
+        for name in ["FLICKDD_ENABLED", "FLICKSYNC_ENABLED"] {
+            let s = Settings::in_memory(env_of(&[(name, "perhaps")]));
+            let scope = if name == "FLICKDD_ENABLED" {
+                Scope::FlickDd
+            } else {
+                Scope::FlickSync
+            };
+            assert!(s.is_enabled(scope), "{name}");
+        }
+        let s = Settings::in_memory(env_of(&[("FLICKDD_ENABLED", "perhaps")]));
+        let err = s.dd_config().unwrap_err();
+        assert!(err.to_string().contains("FLICKDD_ENABLED"), "{err}");
     }
 }
