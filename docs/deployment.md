@@ -203,7 +203,7 @@ sync.example.com {
 
 ## Operations
 
-- **Health**: `GET /health` (liveness), `GET /ready` (503 when shutting down or without keys).
+- **Health**: `GET /health` (liveness), `GET /ready` (503 until the signing keys are loaded).
 - **Logs**: structured via `tracing`; `FLICKSYNC_LOG_FORMAT=json` for log shippers, `FLICKSYNC_LOG_LEVEL=info`
   (or `info,flicksync::room=debug`). Events include `room_id`, `participant_id` and `server_id`. Tokens, passwords and chat
   contents are never logged (and query strings are not logged).

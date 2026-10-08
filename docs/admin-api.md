@@ -1,7 +1,7 @@
 # Admin API
 
 Operator endpoints used by the [web panel](../panel/README.md). Disabled (`404`) unless `PANEL_PASSWORD` has 10+
-characters; the token is `hex(HMAC-SHA256(PANEL_PASSWORD, "flick-admin-api-v1"))`. The old `FLICKSYNC_ADMIN_TOKEN` still
+characters (or the legacy `FLICKSYNC_ADMIN_TOKEN` alone is set); the token is `hex(HMAC-SHA256(PANEL_PASSWORD, "flick-admin-api-v1"))`. The old `FLICKSYNC_ADMIN_TOKEN` still
 works and is deprecated.
 
 * Password length is measured in bytes server-side, while the panel counts characters; `PANEL_PASSWORD` is trimmed
@@ -115,46 +115,65 @@ environment.
 
 ```json
 { "modules": [
-  { "id": "flicksync", "state": "running", "enabled": true, "pending_reload": false },
-  { "id": "flickdd", "state": "failed", "reason": "invalid value", "enabled": true, "pending_reload": false }
+  { "id": "flicksync", "state": "running", "message": null, "enabled": true, "pending_reload": false, "since": 1790959000000 },
+  { "id": "flickdd", "state": "failed", "message": "invalid value", "enabled": true, "pending_reload": false, "since": null }
 ] }
 ```
 
-`state` is `stopped`, `running` or `failed`; `reason` is present when failed. `pending_reload` is true when stored
-settings changed since the module started.
+`state` is `stopped`, `running` or `failed`. `message` is always present: the reason when failed, otherwise `null`.
+`since` is the start time in ms while running, otherwise `null`. `pending_reload` is true when stored settings
+changed since the module started. Every status object (here and in the answers below) has these fields.
 
 ### `POST /admin/v1/modules/{id}/start`, `/stop`, `/reload`
 
-No body. Answer: the module's status object as above. `start` persists `enabled=true` first, `stop` persists
+No body. Answer `200`: the module's status object as above. `start` persists `enabled=true` first, `stop` persists
 `enabled=false`; both are idempotent. `reload` restarts with the stored settings and leaves a disabled module stopped.
-Errors: `404` for an unknown id, `400` when the stored settings are invalid, `401` without the token.
+Invalid stored settings are not an HTTP error: the answer is `200` with `state: "failed"` and the reason in `message`.
+Errors: `404` for an unknown module id or action, `500 INTERNAL` when the settings file cannot be written, `401`
+without the token.
 
 ### `GET /admin/v1/settings/{scope}`
 
-`scope` is `server`, `flicksync` or `flickdd`. Answer: every editable setting with its `value`, `source`
-(`panel`, `environment` or `default`) and `default`. Secrets are never returned, only whether they are `set`.
-Unknown scope: `404`.
+`scope` is `server`, `flicksync` or `flickdd` (anything else: `404`). Answer:
+
+```json
+{ "scope": "flicksync", "revision": 3, "fields": [
+  { "name": "FLICKSYNC_MAX_ROOMS", "kind": "int", "secret": false, "value": "10000", "set": false,
+    "source": "default", "default": "10000" },
+  { "name": "FLICKSYNC_DEFAULT_CONTROL_MODE", "kind": "choice", "secret": false, "value": "everyone", "set": false,
+    "source": "default", "default": "everyone", "choices": ["everyone", "host_only"] }
+] }
+```
+
+`kind` is `bool`, `int`, `float`, `text`, `choice`, `list` or `secret`. `value` and `default` are strings. `source` is
+`panel`, `environment` or `default`; `set` says a value exists in the panel or the environment. `choices` appears for
+`choice` fields only. For secrets `value` and `default` are always `null`, so only `set` (a boolean) tells whether one
+exists.
 
 ### `PUT /admin/v1/settings/{scope}`
 
 ```json
-{ "values": { "FLICKSYNC_MAX_ROOMS": 200, "FLICKSYNC_METRICS_TOKEN": null } }
+{ "values": { "FLICKSYNC_MAX_ROOMS": 200, "FLICKSYNC_DEFAULT_CONTROL_MODE": null } }
 ```
 
-Partial update: a name with a value stores it, `null` removes the stored value (back to environment or default), an
-omitted name is untouched. The merged result is validated as a whole; on failure the answer is `400` with the reason
-and nothing is written. Answer on success: the new settings view. Changes to a running module show as
-`pending_reload` until it is reloaded.
+Partial update: a name with a value stores it (strings, numbers and booleans are all accepted as scalars), `null`
+removes the stored value (back to environment or default), an omitted name is untouched. The merged result is
+validated as a whole and nothing is written on failure. Answer `200`: the new settings view. Changes to a running
+module show as `pending_reload` until it is reloaded. Errors: `400 INVALID_PAYLOAD` for a body that is not
+`{"values": {...}}`, a non-scalar value, an unknown field, a field that belongs to another scope (for example
+`FLICKSYNC_METRICS_TOKEN` is a `server` setting) or a value that fails validation; `404` for an unknown scope;
+`500 INTERNAL` when the file cannot be written.
 
 ### `POST /admin/v1/settings/server/reload`
 
 Re-reads the server scope and applies it live: signing keys, public address, CORS origins, metrics and log level.
-Modules keep running. An invalid stored configuration answers `400` and the previous one stays active.
+Modules keep running. Answer `200`: `{"reloaded": true}`. An invalid stored configuration answers `400 INVALID_PAYLOAD`
+and the previous one stays active.
 
 ## FlickDD
 
-The five `dd` routes expose [FlickDD](flickdd-integration.md) downloads. While FlickDD is off
-(`FLICKDD_ENABLED=false`) all five answer `404` with `{"error":{"code":"DOWNLOAD_NOT_FOUND","message":"FlickDD is disabled"}}`,
+The five `dd` routes expose [FlickDD](flickdd-integration.md) downloads. While the FlickDD module is stopped
+(its persisted switch is off) all five answer `404` with `{"error":{"code":"DOWNLOAD_NOT_FOUND","message":"FlickDD is disabled"}}`,
 so the panel can tell "off" from "no data". Download tokens are never part of any response. `user_id` is the key
 `"{server_id}/{user_id}"` (a user id is only unique per Flick server), `user_name` the display name from the token.
 
