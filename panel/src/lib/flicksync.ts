@@ -32,31 +32,38 @@ export async function adminFetch(
       signal: AbortSignal.timeout(5000),
     });
     if (res.status === 204) return { status: 204, body: null };
-    if (res.status === 404 && method === "GET") {
-      // The admin API answers 404 only when FLICKSYNC_ADMIN_TOKEN is unset on the server.
-      return { status: 503, body: { error: { code: "ADMIN_API_DISABLED" } } };
-    }
     if (res.status === 401) {
       return { status: 502, body: { error: { code: "ADMIN_TOKEN_REJECTED" } } };
     }
     const body = await res.json().catch(() => null);
+    if (res.status === 404 && method === "GET" && !hasErrorCode(body)) {
+      // A bare 404 (no error body) means the admin API is off: no admin token on the server.
+      return { status: 503, body: { error: { code: "ADMIN_API_DISABLED" } } };
+    }
+    // Error bodies are passed on as they are: their `message` explains the problem.
     return { status: res.status, body };
   } catch {
     return { status: 502, body: { error: { code: "UNREACHABLE" } } };
   }
 }
 
+function hasErrorCode(body: unknown): boolean {
+  return typeof (body as { error?: { code?: unknown } } | null)?.error?.code === "string";
+}
+
 /**
- * Call a FlickDD admin route (`dd/<path>`). FlickDD answers 404 on GET when it is disabled,
- * which is reported as DD_DISABLED rather than as a disabled admin API.
+ * Call a FlickDD admin route (`dd/<path>`). FlickDD answers 404 DOWNLOAD_NOT_FOUND on GET when
+ * it is not running, which is reported as DD_DISABLED with the server's explanation (stopped,
+ * or the reason it failed to start).
  */
 export async function ddFetch(
   path: string,
   method: "GET" | "DELETE" = "GET",
 ): Promise<UpstreamResult> {
   const res = await adminFetch(`dd/${path}`, method);
-  if (method === "GET" && res.status === 503 && (res.body as { error?: { code?: string } })?.error?.code === "ADMIN_API_DISABLED") {
-    return { status: 503, body: { error: { code: "DD_DISABLED" } } };
+  const error = (res.body as { error?: { code?: string; message?: string } } | null)?.error;
+  if (method === "GET" && res.status === 404 && error?.code === "DOWNLOAD_NOT_FOUND") {
+    return { status: 503, body: { error: { code: "DD_DISABLED", message: error.message } } };
   }
   return res;
 }

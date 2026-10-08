@@ -400,6 +400,8 @@ Malformed input never terminates a connection by itself: it produces an `error` 
 | `INTERNAL` | 500 | Unexpected server condition (details are only in the server logs). |
 
 The FlickDD codes only occur on the download routes (plain HTTP, never on the WebSocket); see [flickdd-integration.md](flickdd-integration.md).
+The operator API (`/admin/v1/*`) adds its own codes (`SETTINGS_INVALID`, `UNKNOWN_SETTING`, `SETTINGS_WRITE_FAILED`,
+`RELOAD_FAILED`, `UNKNOWN_SCOPE`, `UNKNOWN_MODULE`, `UNKNOWN_ACTION`); see [admin-api.md](admin-api.md#errors).
 
 ## 14. Close codes
 

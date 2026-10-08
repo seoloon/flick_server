@@ -23,7 +23,7 @@ pub const PERM_JOIN_ROOM: &str = "rooms:join";
 pub const PERM_CHAT: &str = "chat:send";
 pub const PERM_DOWNLOAD: &str = "downloads:create";
 
-const MIN_SECRET_LEN: usize = 32;
+pub const MIN_SECRET_LEN: usize = 32;
 const MAX_ID_LEN: usize = 128;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

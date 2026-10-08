@@ -12,7 +12,7 @@ use std::sync::{Arc, RwLock, RwLockReadGuard};
 use serde::Serialize;
 use tracing_subscriber::EnvFilter;
 
-use crate::auth::Authenticator;
+use crate::auth::{AuthConfigError, Authenticator, MIN_SECRET_LEN};
 use crate::config::{Config, ConfigError, parse_bool};
 use crate::dd::config::DdConfig;
 use fields::{Field, Kind, field};
@@ -55,16 +55,109 @@ pub struct ScopeView {
     pub fields: Vec<FieldView>,
 }
 
+/// Messages are meant for the operator (they reach the panel): they name the variable, say what
+/// is wrong and what is expected, and never contain a secret value or a filesystem path.
 #[derive(Debug, thiserror::Error)]
 pub enum SettingsError {
-    #[error("unknown setting {0}")]
-    UnknownField(String),
-    #[error("{0} is too long")]
+    /// `name` is not a setting of `scope` (unknown, boot-only or of another scope).
+    #[error("{}", unknown_field_message(name, *scope))]
+    UnknownField { name: String, scope: Scope },
+    #[error("{0} is too long: at most {MAX_VALUE_LEN} bytes are accepted.")]
     TooLong(String),
     #[error("{0}")]
     Invalid(String),
     #[error(transparent)]
     Store(#[from] StoreError),
+}
+
+/// `s` cut to a length that is safe to echo in a message.
+pub fn shorten(s: &str) -> String {
+    const MAX: usize = 64;
+    match s.char_indices().nth(MAX) {
+        None => s.to_owned(),
+        Some((i, _)) => format!("{}...", &s[..i]),
+    }
+}
+
+fn unknown_field_message(name: &str, scope: Scope) -> String {
+    let shown = shorten(name);
+    match field(name) {
+        Some(f) => format!(
+            "{shown} is a {other} setting, not a {scope} one: send it with PUT /admin/v1/settings/{other}.",
+            other = f.scope.id(),
+            scope = scope.id(),
+        ),
+        None if fields::BOOT_ONLY.contains(&name) => format!(
+            "{shown} cannot be changed from the panel: it is read from the environment once, at startup."
+        ),
+        None => format!(
+            "{shown} is not a known setting. GET /admin/v1/settings/{} lists the settings of this scope.",
+            scope.id()
+        ),
+    }
+}
+
+/// What a valid value of `kind` looks like, for a message.
+fn expected(kind: Kind) -> Option<String> {
+    match kind {
+        Kind::Bool => Some("true or false (1/0, yes/no and on/off are accepted too)".to_owned()),
+        Kind::Int => Some("a whole number (0 or more)".to_owned()),
+        Kind::Float => Some("a number, such as 0.5".to_owned()),
+        Kind::Choice(c) => Some(format!("one of: {}", c.join(", "))),
+        Kind::Text | Kind::List | Kind::Secret => None,
+    }
+}
+
+/// A configuration error as a sentence an operator can act on: the variable, what is wrong,
+/// what is expected. The value is never shown for a secret, nor any filesystem path.
+pub fn explain(e: &ConfigError) -> String {
+    match e {
+        ConfigError::Invalid {
+            name,
+            value,
+            reason,
+        } => {
+            let f = field(name);
+            let kind = f.map(|f| f.kind);
+            let shown = if kind == Some(Kind::Secret) {
+                String::new()
+            } else {
+                format!(" '{}'", shorten(value))
+            };
+            match kind.and_then(expected) {
+                // The parser's reason only repeats the expected values for these two.
+                Some(exp) if matches!(kind, Some(Kind::Bool | Kind::Choice(_))) => {
+                    format!("{name} has an invalid value{shown}. Expected {exp}.")
+                }
+                Some(exp) => {
+                    format!("{name} has an invalid value{shown} ({reason}). Expected {exp}.")
+                }
+                None => format!("{name} has an invalid value{shown}: {reason}."),
+            }
+        }
+        ConfigError::Inconsistent(m) => sentence(m),
+        ConfigError::File { source, .. } => format!(
+            "The file named by FLICKSYNC_AUTH_KEYS_FILE cannot be read ({}). Check that it exists inside the container and is readable by the server.",
+            source.kind()
+        ),
+    }
+}
+
+/// An invalid signing-key list, as a sentence (the secrets are never part of it).
+pub fn explain_keys(e: &AuthConfigError) -> String {
+    format!(
+        "FLICKSYNC_AUTH_KEYS is not valid: {e}. Expected comma-separated kid:server_id:secret entries, each with its own kid and a secret of at least {MIN_SECRET_LEN} characters."
+    )
+}
+
+/// `m` with a capital first letter and a final period.
+fn sentence(m: &str) -> String {
+    let mut s = m.trim_end_matches('.').to_owned();
+    if let Some(first) = s.get(..1) {
+        s.replace_range(..1, &first.to_ascii_uppercase());
+    }
+    s.push('.');
+    s
 }
 
 pub struct Settings {
@@ -216,8 +309,9 @@ impl Settings {
 
     /// Persist the module's on/off switch (no validation of the other settings).
     pub fn set_enabled(&self, scope: Scope, enabled: bool) -> Result<(), SettingsError> {
-        let name = Self::enabled_var(scope)
-            .ok_or_else(|| SettingsError::UnknownField("enabled".into()))?;
+        let name = Self::enabled_var(scope).ok_or_else(|| {
+            SettingsError::Invalid(format!("The {} scope has no on/off switch.", scope.id()))
+        })?;
         let mut guard = self.stored.write().unwrap_or_else(|e| e.into_inner());
         let mut next = guard.clone();
         next.scope_mut(scope)
@@ -235,7 +329,12 @@ impl Settings {
         for (name, value) in &patch {
             match field(name) {
                 Some(f) if f.scope == scope => {}
-                _ => return Err(SettingsError::UnknownField(name.clone())),
+                _ => {
+                    return Err(SettingsError::UnknownField {
+                        name: name.clone(),
+                        scope,
+                    });
+                }
             }
             if value.as_ref().is_some_and(|v| v.len() > MAX_VALUE_LEN) {
                 return Err(SettingsError::TooLong(name.clone()));
@@ -263,14 +362,17 @@ impl Settings {
     /// neither side can block the other's saves.
     fn validate(&self, next: &Stored, scope: Scope) -> Result<(), SettingsError> {
         let look = |k: &str| self.lookup_in(next, k);
-        let invalid = |e: &dyn std::fmt::Display| SettingsError::Invalid(e.to_string());
+        let invalid = |e: &ConfigError| SettingsError::Invalid(explain(e));
         match scope {
             Scope::Server => {
                 let cfg = Config::from_lookup(&look).map_err(|e| invalid(&e))?;
                 Authenticator::new(&cfg.auth)
-                    .map_err(|e| SettingsError::Invalid(format!("FLICKSYNC_AUTH_KEYS: {e}")))?;
-                EnvFilter::try_new(&cfg.log_level)
-                    .map_err(|e| SettingsError::Invalid(format!("FLICKSYNC_LOG_LEVEL: {e}")))?;
+                    .map_err(|e| SettingsError::Invalid(explain_keys(&e)))?;
+                EnvFilter::try_new(&cfg.log_level).map_err(|e| {
+                    SettingsError::Invalid(format!(
+                        "FLICKSYNC_LOG_LEVEL is not a valid log filter ({e}). Expected a level (error, warn, info, debug or trace) or a filter such as 'info,flicksync=debug'."
+                    ))
+                })?;
             }
             Scope::FlickSync => {
                 Config::from_lookup(&look).map_err(|e| invalid(&e))?;
@@ -438,7 +540,7 @@ mod tests {
             assert!(
                 matches!(
                     s.put(Scope::FlickSync, patch(&[(name, Some("1"))])),
-                    Err(SettingsError::UnknownField(_))
+                    Err(SettingsError::UnknownField { .. })
                 ),
                 "{name}"
             );
@@ -508,6 +610,69 @@ mod tests {
         // `FLICKDD_ENABLED=true` in the environment is the fallback for an existing install.
         let legacy = Settings::in_memory(env_of(&[("FLICKDD_ENABLED", "true")]));
         assert!(legacy.is_enabled(Scope::FlickDd));
+    }
+
+    #[test]
+    fn explanations_name_the_variable_and_what_is_expected_but_no_secret_or_path() {
+        let invalid = |name: &str, value: &str, reason: &str| ConfigError::Invalid {
+            name: name.into(),
+            value: value.into(),
+            reason: reason.into(),
+        };
+        let m = explain(&invalid(
+            "FLICKSYNC_MAX_ROOMS",
+            "ten",
+            "invalid digit found in string",
+        ));
+        assert_eq!(
+            m,
+            "FLICKSYNC_MAX_ROOMS has an invalid value 'ten' (invalid digit found in string). Expected a whole number (0 or more)."
+        );
+        let m = explain(&invalid(
+            "FLICKSYNC_DEFAULT_CONTROL_MODE",
+            "nobody",
+            "expected 'everyone' or 'host_only'",
+        ));
+        assert_eq!(
+            m,
+            "FLICKSYNC_DEFAULT_CONTROL_MODE has an invalid value 'nobody'. Expected one of: everyone, host_only."
+        );
+        let m = explain(&invalid("FLICKDD_PLEX_TOKEN", "s3cr3t", "bad"));
+        assert!(
+            m.contains("FLICKDD_PLEX_TOKEN") && !m.contains("s3cr3t"),
+            "{m}"
+        );
+        let m = explain(&invalid("FLICKSYNC_PUBLIC_URL", &"x".repeat(500), "bad"));
+        assert!(m.len() < 200, "a long value is cut: {m}");
+        let m = explain(&ConfigError::File {
+            path: "/secret/place/keys".into(),
+            source: std::io::Error::from(std::io::ErrorKind::NotFound),
+        });
+        assert!(
+            m.contains("FLICKSYNC_AUTH_KEYS_FILE") && !m.contains("/secret"),
+            "{m}"
+        );
+        assert_eq!(
+            explain(&ConfigError::Inconsistent("a must be b".into())),
+            "A must be b."
+        );
+    }
+
+    #[test]
+    fn an_unknown_field_says_where_it_belongs() {
+        let s = Settings::in_memory(env_of(&[]));
+        let msg = |scope, name: &str| {
+            s.put(scope, patch(&[(name, Some("1"))]))
+                .unwrap_err()
+                .to_string()
+        };
+        assert_eq!(
+            msg(Scope::FlickSync, "FLICKSYNC_METRICS_TOKEN"),
+            "FLICKSYNC_METRICS_TOKEN is a server setting, not a flicksync one: send it with PUT /admin/v1/settings/server."
+        );
+        assert!(msg(Scope::Server, "FLICKSYNC_PORT").contains("environment"));
+        assert!(msg(Scope::Server, "NOPE").contains("GET /admin/v1/settings/server"));
+        assert!(msg(Scope::Server, &"N".repeat(1000)).len() < 200);
     }
 
     #[test]

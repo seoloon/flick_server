@@ -32,7 +32,7 @@ use crate::modules::ModuleId;
 use crate::room::AdminRoomView;
 use crate::room::manager::share_code;
 use crate::settings::SettingsError;
-use crate::settings::store::Scope;
+use crate::settings::store::{self, Scope, StoreError};
 
 /// Extractor: succeeds only for a valid admin token.
 pub struct AdminAuth;
@@ -47,18 +47,18 @@ impl FromRequestParts<AppState> for AdminAuth {
         if !state.admin.is_enabled() {
             return Err(StatusCode::NOT_FOUND.into_response());
         }
-        let ok = bearer_token(&parts.headers).is_some_and(|t| state.admin.accepts(t));
-        if ok {
-            Ok(AdminAuth)
-        } else {
-            state.metrics.auth_failures_total.inc();
-            warn!("admin API: invalid or missing token");
-            Err(ApiError(Error::new(
-                ErrorCode::Unauthenticated,
-                "invalid admin token",
-            ))
-            .into_response())
-        }
+        let message = match bearer_token(&parts.headers) {
+            Some(t) if state.admin.accepts(t) => return Ok(AdminAuth),
+            Some(_) => {
+                "The admin token was not accepted. It must be derived from the server's PANEL_PASSWORD (or equal the deprecated FLICKSYNC_ADMIN_TOKEN): check that the panel and the server use the same password."
+            }
+            None => {
+                "The request carries no admin token. Send Authorization: Bearer <token>, with the token derived from PANEL_PASSWORD."
+            }
+        };
+        state.metrics.auth_failures_total.inc();
+        warn!("admin API: invalid or missing token");
+        Err(ApiError(Error::new(ErrorCode::Unauthenticated, message)).into_response())
     }
 }
 
@@ -102,8 +102,13 @@ pub async fn overview(_: AdminAuth, State(state): State<AppState>) -> Response {
 /// `GET /admin/v1/invite`: the one-link invitation (contains the signing key).
 pub async fn invite(_: AdminAuth, State(state): State<AppState>) -> Result<Response, ApiError> {
     let server = state.server();
-    let inv = invite::invitation(&server.cfg)
-        .map_err(|e| Error::new(ErrorCode::Internal, e.to_string()))?;
+    let inv = invite::invitation(&server.cfg).map_err(|e| {
+        warn!(error = %e, "admin API: cannot build the invitation");
+        Error::new(
+            ErrorCode::Internal,
+            "The invitation could not be built from the signing key in force. Check FLICKSYNC_AUTH_KEYS (or the key file), then reload the server settings.",
+        )
+    })?;
     let (endpoint, guessed) = invite::endpoint(&server.cfg);
     let url = inv.to_url();
     let (kid, server_id) = parse_key_entry(&inv.key)
@@ -132,9 +137,34 @@ struct AdminRoom {
     share_code: String,
 }
 
+/// Why `id` is not running, and what to do about it.
+fn not_running(state: &AppState, id: ModuleId, label: &str) -> String {
+    let status = state.module_status(id);
+    match status.message {
+        Some(reason) if status.state == "failed" => {
+            format!("{label} is enabled but failed to start. {reason}")
+        }
+        _ => format!(
+            "{label} is stopped. Start it with POST /admin/v1/modules/{}/start.",
+            id.id()
+        ),
+    }
+}
+
+/// The running FlickSync, or `MODULE_DISABLED` saying why.
+fn admin_sync(state: &AppState) -> Result<Arc<crate::app::SyncRuntime>, ApiError> {
+    state.sync_opt().ok_or_else(|| {
+        Error::new(
+            ErrorCode::ModuleDisabled,
+            not_running(state, ModuleId::FlickSync, "FlickSync"),
+        )
+        .into()
+    })
+}
+
 /// `GET /admin/v1/rooms`
 pub async fn list_rooms(_: AdminAuth, State(state): State<AppState>) -> Result<Response, ApiError> {
-    let sync = state.sync()?;
+    let sync = admin_sync(&state)?;
     let rooms: Vec<AdminRoom> = sync
         .manager
         .admin_rooms()
@@ -156,13 +186,22 @@ pub async fn close_room(
     State(state): State<AppState>,
     Path(room_id): Path<String>,
 ) -> Result<StatusCode, ApiError> {
-    state.sync()?.manager.admin_close_room(&room_id)?;
+    admin_sync(&state)?
+        .manager
+        .admin_close_room(&room_id)
+        .map_err(|e| match e.code {
+            ErrorCode::RoomNotFound => Error::new(
+                ErrorCode::RoomNotFound,
+                "No live room has this id: it may have closed already.",
+            ),
+            _ => e,
+        })?;
     Ok(StatusCode::NO_CONTENT)
 }
 
 /// `GET /admin/v1/stats`: counters, drift distribution and a rolling history (1 h, 10 s steps).
 pub async fn stats(_: AdminAuth, State(state): State<AppState>) -> Result<Response, ApiError> {
-    let sync = state.sync()?;
+    let sync = admin_sync(&state)?;
     let m = &state.metrics;
     let d = &sync.manager.config().room.drift;
     Ok(no_store(
@@ -192,11 +231,16 @@ pub async fn stats(_: AdminAuth, State(state): State<AppState>) -> Result<Respon
     ))
 }
 
-/// The FlickDD state, or 404 when FlickDD is disabled.
+/// The FlickDD state, or 404 `DOWNLOAD_NOT_FOUND` (kept for the panel) saying why it is not
+/// running.
 fn dd_state(state: &AppState) -> Result<Arc<DdState>, ApiError> {
-    state
-        .dd()
-        .ok_or_else(|| Error::new(ErrorCode::DownloadNotFound, "FlickDD is disabled").into())
+    state.dd().ok_or_else(|| {
+        Error::new(
+            ErrorCode::DownloadNotFound,
+            not_running(state, ModuleId::FlickDd, "FlickDD"),
+        )
+        .into()
+    })
 }
 
 /// `GET /admin/v1/dd/overview`: configuration limits and headline numbers.
@@ -249,8 +293,13 @@ pub async fn dd_history(_: AdminAuth, State(state): State<AppState>) -> Result<R
 pub async fn dd_stats(_: AdminAuth, State(state): State<AppState>) -> Result<Response, ApiError> {
     let dd = dd_state(&state)?;
     let now = dd_now_ms();
-    let mut body = serde_json::to_value(dd.stats.snapshot(now))
-        .map_err(|e| Error::new(ErrorCode::Internal, e.to_string()))?;
+    let mut body = serde_json::to_value(dd.stats.snapshot(now)).map_err(|e| {
+        warn!(error = %e, "admin API: cannot encode the FlickDD stats");
+        Error::new(
+            ErrorCode::Internal,
+            "The FlickDD statistics could not be encoded. Try again; the server logs have the details.",
+        )
+    })?;
     body["now"] = json!(now);
     Ok(no_store(StatusCode::OK, body))
 }
@@ -265,7 +314,11 @@ pub async fn dd_cancel(
     if dd.grants.cancel(&id, true, dd_now_ms()) {
         Ok(StatusCode::NO_CONTENT)
     } else {
-        Err(Error::new(ErrorCode::DownloadNotFound, "download not found").into())
+        Err(Error::new(
+            ErrorCode::DownloadNotFound,
+            "No download with this id is in progress: it may have finished, expired or been cancelled already.",
+        )
+        .into())
     }
 }
 
@@ -277,25 +330,50 @@ pub async fn no_store_layer(mut r: Response) -> Response {
     r
 }
 
-fn not_found() -> Response {
-    StatusCode::NOT_FOUND.into_response()
-}
-
 fn bad_request(message: impl Into<String>) -> ApiError {
     ApiError(Error::new(ErrorCode::InvalidPayload, message))
 }
 
-fn settings_error(e: SettingsError) -> ApiError {
-    match e {
+/// Comma-separated ids, for "valid ones are ..." hints.
+fn list(ids: impl IntoIterator<Item = &'static str>) -> String {
+    ids.into_iter().collect::<Vec<_>>().join(", ")
+}
+
+fn unknown_scope(scope: &str) -> ApiError {
+    ApiError(Error::new(
+        ErrorCode::UnknownScope,
+        format!(
+            "Unknown settings scope '{}'. Valid scopes: {}.",
+            crate::settings::shorten(scope),
+            list(Scope::ALL.map(Scope::id))
+        ),
+    ))
+}
+
+/// `what` is the change being saved ("settings", "module switch") for the message.
+fn settings_error(e: SettingsError, what: &str) -> ApiError {
+    let (code, message) = match e {
         SettingsError::Store(inner) => {
             warn!(error = %inner, "could not save the settings");
-            ApiError(Error::new(
-                ErrorCode::Internal,
-                "could not save the settings",
-            ))
+            let cause = match &inner {
+                StoreError::Write { source, .. } => source.kind().to_string(),
+                _ => "unexpected error".to_owned(),
+            };
+            (
+                ErrorCode::SettingsWriteFailed,
+                format!(
+                    "The {what} could not be saved: {} in the data directory cannot be written ({cause}). Nothing was changed; check that the data volume is writable by the server, then try again.",
+                    store::FILE_NAME
+                ),
+            )
         }
-        other => bad_request(other.to_string()),
-    }
+        e @ SettingsError::UnknownField { .. } => (ErrorCode::UnknownSetting, e.to_string()),
+        e @ (SettingsError::TooLong(_) | SettingsError::Invalid(_)) => (
+            ErrorCode::SettingsInvalid,
+            format!("{e} Nothing was saved."),
+        ),
+    };
+    ApiError(Error::new(code, message))
 }
 
 /// `GET /admin/v1/modules`
@@ -313,14 +391,33 @@ pub async fn module_action(
     State(state): State<AppState>,
     Path((id, action)): Path<(String, String)>,
 ) -> Result<Response, ApiError> {
+    const ACTIONS: [&str; 3] = ["start", "stop", "reload"];
     let Some(id) = ModuleId::from_id(&id) else {
-        return Ok(not_found());
+        return Err(ApiError(Error::new(
+            ErrorCode::UnknownModule,
+            format!(
+                "Unknown module '{}'. Valid modules: {}.",
+                crate::settings::shorten(&id),
+                list(ModuleId::ALL.map(ModuleId::id))
+            ),
+        )));
     };
+    let switch = |e| settings_error(e, "module switch");
     let status = match action.as_str() {
-        "start" => state.start_module(id).map_err(settings_error)?,
-        "stop" => state.stop_module(id).map_err(settings_error)?,
+        "start" => state.start_module(id).map_err(switch)?,
+        "stop" => state.stop_module(id).map_err(switch)?,
         "reload" => state.reload_module(id),
-        _ => return Ok(not_found()),
+        _ => {
+            return Err(ApiError(Error::new(
+                ErrorCode::UnknownAction,
+                format!(
+                    "Unknown action '{}' for module {}. Valid actions: {}.",
+                    crate::settings::shorten(&action),
+                    id.id(),
+                    list(ACTIONS)
+                ),
+            )));
+        }
     };
     Ok(no_store(StatusCode::OK, status))
 }
@@ -330,11 +427,28 @@ pub async fn get_settings(
     _: AdminAuth,
     State(state): State<AppState>,
     Path(scope): Path<String>,
-) -> Response {
-    match Scope::from_id(&scope) {
-        Some(scope) => no_store(StatusCode::OK, state.settings.view(scope)),
-        None => not_found(),
-    }
+) -> Result<Response, ApiError> {
+    let scope = Scope::from_id(&scope).ok_or_else(|| unknown_scope(&scope))?;
+    Ok(no_store(StatusCode::OK, state.settings.view(scope)))
+}
+
+/// The refusal of a body that is not `{"values": {...}}`. Serde's own text is not echoed: it
+/// can quote the request, and the request can hold a secret.
+fn body_error(e: &JsonRejection) -> ApiError {
+    const SHAPE: &str = r#"{"values": {"NAME": value}}"#;
+    bad_request(match e {
+        JsonRejection::MissingJsonContentType(_) => {
+            format!(
+                "The request needs the header Content-Type: application/json, with a body of the form {SHAPE}."
+            )
+        }
+        JsonRejection::JsonSyntaxError(_) => {
+            format!("The body is not valid JSON. Expected the form {SHAPE}.")
+        }
+        _ => format!(
+            "The body must have the form {SHAPE}: an object named values whose keys are setting names."
+        ),
+    })
 }
 
 #[derive(Deserialize)]
@@ -350,10 +464,8 @@ pub async fn put_settings(
     Path(scope): Path<String>,
     body: Result<Json<PutSettings>, JsonRejection>,
 ) -> Result<Response, ApiError> {
-    let Some(scope) = Scope::from_id(&scope) else {
-        return Ok(not_found());
-    };
-    let Json(body) = body.map_err(|_| bad_request("body must be {\"values\": {...}}"))?;
+    let scope = Scope::from_id(&scope).ok_or_else(|| unknown_scope(&scope))?;
+    let Json(body) = body.map_err(|e| body_error(&e))?;
     let mut patch = BTreeMap::new();
     for (name, value) in body.values {
         let value = match value {
@@ -363,13 +475,17 @@ pub async fn put_settings(
             serde_json::Value::Bool(b) => Some(b.to_string()),
             _ => {
                 return Err(bad_request(format!(
-                    "{name}: expected a string, number, boolean or null"
+                    "{} has a value of the wrong type (an array or an object). Send a string, a number, a boolean, or null to remove the stored value.",
+                    crate::settings::shorten(&name)
                 )));
             }
         };
         patch.insert(name, value);
     }
-    let view = state.settings.put(scope, patch).map_err(settings_error)?;
+    let view = state
+        .settings
+        .put(scope, patch)
+        .map_err(|e| settings_error(e, "settings"))?;
     Ok(no_store(StatusCode::OK, view))
 }
 
@@ -378,8 +494,9 @@ pub async fn reload_server(
     _: AdminAuth,
     State(state): State<AppState>,
 ) -> Result<Response, ApiError> {
-    state
-        .reload_server()
-        .map_err(|e| bad_request(e.to_string()))?;
+    state.reload_server().map_err(|e| {
+        warn!(error = %e, "admin API: the server settings could not be reloaded");
+        ApiError(e.admin_error())
+    })?;
     Ok(no_store(StatusCode::OK, json!({ "reloaded": true })))
 }

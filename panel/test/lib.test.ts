@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
+import { adminError } from "../src/lib/admin-errors.ts";
 import { AttemptLimiter } from "../src/lib/limiter.ts";
 import { createSessionToken, passwordMatches, verifySessionToken } from "../src/lib/session.ts";
 import {
@@ -90,4 +91,24 @@ test("a playing room's position advances from the server stamp, a paused one doe
   assert.equal(livePosition(p, 4_000), 106);
   assert.equal(livePosition({ ...p, state: "paused" }, 4_000), 100);
   assert.equal(livePosition(p, 500), 100, "never goes backwards");
+});
+
+test("an admin error shows the server's message with its code", () => {
+  const e = adminError({
+    error: { code: "SETTINGS_INVALID", message: "FLICKSYNC_MAX_ROOMS has an invalid value 'ten'." },
+  });
+  assert.equal(e.code, "SETTINGS_INVALID");
+  assert.equal(e.text, "FLICKSYNC_MAX_ROOMS has an invalid value 'ten'. (SETTINGS_INVALID)");
+});
+
+test("a panel-side error without a message uses the panel's own text", () => {
+  const e = adminError({ error: { code: "UNREACHABLE" } });
+  assert.equal(e.code, "UNREACHABLE");
+  assert.match(e.text, /unreachable/);
+});
+
+test("an unknown code without a message still shows the code", () => {
+  assert.match(adminError({ error: { code: "SOMETHING_NEW" } }).text, /SOMETHING_NEW/);
+  assert.equal(adminError(null).code, "UNKNOWN");
+  assert.equal(adminError("not json").code, "UNKNOWN");
 });

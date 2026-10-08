@@ -228,17 +228,19 @@ impl Config {
             && drift.ignore_ms < drift.soft_ms
             && drift.soft_ms < drift.hard_ms)
         {
-            return Err(inconsistent(
-                "sync thresholds must satisfy 0 < IGNORE < SOFT < HARD (milliseconds)",
-            ));
+            return Err(ConfigError::Inconsistent(format!(
+                "FLICKSYNC_SYNC_DRIFT_IGNORE, FLICKSYNC_SYNC_DRIFT_SOFT and FLICKSYNC_SYNC_DRIFT_HARD must increase: 0 < IGNORE < SOFT < HARD (milliseconds); they are now {}, {} and {}",
+                drift.ignore_ms, drift.soft_ms, drift.hard_ms
+            )));
         }
         if !(0.0 < drift.rate_soft
             && drift.rate_soft <= drift.rate_strong
             && drift.rate_strong < 0.5)
         {
-            return Err(inconsistent(
-                "sync rate factors must satisfy 0 < RATE_SOFT <= RATE_STRONG < 0.5",
-            ));
+            return Err(ConfigError::Inconsistent(format!(
+                "FLICKSYNC_SYNC_RATE_SOFT and FLICKSYNC_SYNC_RATE_STRONG must satisfy 0 < RATE_SOFT <= RATE_STRONG < 0.5; they are now {} and {}",
+                drift.rate_soft, drift.rate_strong
+            )));
         }
 
         let chat = ChatConfig {
@@ -290,9 +292,10 @@ impl Config {
             return Err(inconsistent("FLICKSYNC_MAX_ROOM_SIZE must be at least 1"));
         }
         if !(room.rate_min > 0.0 && room.rate_min <= 1.0 && room.rate_max >= 1.0) {
-            return Err(inconsistent(
-                "FLICKSYNC_RATE_MIN must be in (0, 1] and FLICKSYNC_RATE_MAX must be >= 1",
-            ));
+            return Err(ConfigError::Inconsistent(format!(
+                "FLICKSYNC_RATE_MIN must be above 0 and at most 1, and FLICKSYNC_RATE_MAX at least 1; they are now {} and {}",
+                room.rate_min, room.rate_max
+            )));
         }
         if room.heartbeat_interval_ms == 0 {
             return Err(inconsistent(
@@ -342,9 +345,10 @@ impl Config {
             max_connections: parse(env, "FLICKSYNC_MAX_CONNECTIONS", 10_000)?,
         };
         if ws.ping_interval_secs == 0 || ws.idle_timeout_secs <= ws.ping_interval_secs {
-            return Err(inconsistent(
-                "FLICKSYNC_WS_IDLE_TIMEOUT must be greater than FLICKSYNC_WS_PING_INTERVAL (and the latter > 0)",
-            ));
+            return Err(ConfigError::Inconsistent(format!(
+                "FLICKSYNC_WS_IDLE_TIMEOUT must be greater than FLICKSYNC_WS_PING_INTERVAL, which must be at least 1 (seconds); they are now {} and {}",
+                ws.idle_timeout_secs, ws.ping_interval_secs
+            )));
         }
 
         let http = HttpConfig {

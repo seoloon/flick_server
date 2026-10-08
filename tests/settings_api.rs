@@ -154,12 +154,57 @@ async fn a_put_changes_the_value_and_flags_a_pending_reload() {
 async fn an_invalid_put_is_refused_and_writes_nothing() {
     let s = server(&[]).await;
     let before = s.state.settings.revision();
-    for body in [
-        json!({"values": {"FLICKSYNC_MAX_ROOM_SIZE": 0}}),
-        json!({"values": {"NOPE": 1}}),
-        json!({"values": {"FLICKDD_MAX_PARALLEL": 1}}),
-        json!({"values": {"FLICKSYNC_MAX_ROOM_SIZE": [1]}}),
-        json!({"nothing": true}),
+    // (body, code, words the message must contain)
+    for (body, code, words) in [
+        (
+            json!({"values": {"FLICKSYNC_MAX_ROOM_SIZE": 0}}),
+            "SETTINGS_INVALID",
+            &["FLICKSYNC_MAX_ROOM_SIZE", "at least 1"][..],
+        ),
+        (
+            json!({"values": {"FLICKSYNC_MAX_ROOM_SIZE": "ten"}}),
+            "SETTINGS_INVALID",
+            &["FLICKSYNC_MAX_ROOM_SIZE", "'ten'", "whole number"][..],
+        ),
+        (
+            json!({"values": {"FLICKSYNC_HOST_LEAVE_POLICY": "explode"}}),
+            "SETTINGS_INVALID",
+            &["FLICKSYNC_HOST_LEAVE_POLICY", "transfer, close"][..],
+        ),
+        (
+            json!({"values": {"FLICKSYNC_SYNC_DRIFT_SOFT": 50}}),
+            "SETTINGS_INVALID",
+            &[
+                "FLICKSYNC_SYNC_DRIFT_IGNORE",
+                "FLICKSYNC_SYNC_DRIFT_SOFT",
+                "50",
+            ][..],
+        ),
+        (
+            json!({"values": {"NOPE": 1}}),
+            "UNKNOWN_SETTING",
+            &["NOPE", "GET /admin/v1/settings/flicksync"][..],
+        ),
+        (
+            json!({"values": {"FLICKDD_MAX_PARALLEL": 1}}),
+            "UNKNOWN_SETTING",
+            &["FLICKDD_MAX_PARALLEL", "PUT /admin/v1/settings/flickdd"][..],
+        ),
+        (
+            json!({"values": {"FLICKSYNC_PORT": 1}}),
+            "UNKNOWN_SETTING",
+            &["FLICKSYNC_PORT", "environment"][..],
+        ),
+        (
+            json!({"values": {"FLICKSYNC_MAX_ROOM_SIZE": [1]}}),
+            "INVALID_PAYLOAD",
+            &["FLICKSYNC_MAX_ROOM_SIZE", "string, a number, a boolean"][..],
+        ),
+        (
+            json!({"nothing": true}),
+            "INVALID_PAYLOAD",
+            &["{\"values\""][..],
+        ),
     ] {
         let (st, v) = call(
             &s,
@@ -169,9 +214,225 @@ async fn an_invalid_put_is_refused_and_writes_nothing() {
         )
         .await;
         assert_eq!(st, StatusCode::BAD_REQUEST, "{body}");
-        assert_eq!(v["error"]["code"], "INVALID_PAYLOAD");
+        assert_eq!(v["error"]["code"], code, "{body}: {v}");
+        let message = v["error"]["message"].as_str().unwrap();
+        for w in words {
+            assert!(message.contains(w), "{body}: '{w}' not in: {message}");
+        }
     }
     assert_eq!(s.state.settings.revision(), before, "nothing was written");
+}
+
+#[tokio::test]
+async fn a_body_that_is_not_json_is_explained() {
+    use axum::body::Body;
+    use axum::http::Request;
+    use tower::ServiceExt;
+
+    let s = server(&[]).await;
+    for (content_type, body, words) in [
+        (Some("application/json"), "{not json", "not valid JSON"),
+        (None, r#"{"values":{}}"#, "Content-Type"),
+    ] {
+        let mut req = Request::builder()
+            .method(Method::PUT)
+            .uri("/admin/v1/settings/flicksync")
+            .header("authorization", format!("Bearer {ADMIN}"));
+        if let Some(ct) = content_type {
+            req = req.header("content-type", ct);
+        }
+        let resp = flicksync::app::build_router(s.state.clone())
+            .oneshot(req.body(Body::from(body)).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+        let bytes = axum::body::to_bytes(resp.into_body(), 1 << 20)
+            .await
+            .unwrap();
+        let v: Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(v["error"]["code"], "INVALID_PAYLOAD", "{v}");
+        assert!(
+            v["error"]["message"].as_str().unwrap().contains(words),
+            "{v}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn unknown_scopes_modules_and_actions_are_named_with_the_valid_ones() {
+    let s = server(&[]).await;
+    for (method, path, code, words) in [
+        (
+            Method::GET,
+            "/admin/v1/settings/nope",
+            "UNKNOWN_SCOPE",
+            &["'nope'", "server, flicksync, flickdd"][..],
+        ),
+        (
+            Method::PUT,
+            "/admin/v1/settings/nope",
+            "UNKNOWN_SCOPE",
+            &["'nope'", "server, flicksync, flickdd"][..],
+        ),
+        (
+            Method::POST,
+            "/admin/v1/modules/nope/start",
+            "UNKNOWN_MODULE",
+            &["'nope'", "flicksync, flickdd"][..],
+        ),
+        (
+            Method::POST,
+            "/admin/v1/modules/flicksync/explode",
+            "UNKNOWN_ACTION",
+            &["'explode'", "start, stop, reload"][..],
+        ),
+    ] {
+        let body = (method == Method::PUT).then(|| json!({"values": {}}));
+        let (st, v) = call(&s, method, path, body).await;
+        assert_eq!(st, StatusCode::NOT_FOUND, "{path}");
+        assert_eq!(v["error"]["code"], code, "{path}: {v}");
+        let message = v["error"]["message"].as_str().unwrap();
+        for w in words {
+            assert!(message.contains(w), "{path}: '{w}' not in: {message}");
+        }
+    }
+}
+
+#[tokio::test]
+async fn a_settings_write_failure_is_explained_without_the_path() {
+    let s = server(&[]).await;
+    let dir = s.state.settings.lookup("FLICKSYNC_DATA_DIR").unwrap();
+    // A directory where the temporary file must go makes every save fail.
+    std::fs::create_dir_all(std::path::Path::new(&dir).join("settings.json.tmp")).unwrap();
+    let before = s.state.settings.revision();
+    for (method, path, body) in [
+        (
+            Method::PUT,
+            "/admin/v1/settings/flicksync",
+            Some(json!({"values": {"FLICKSYNC_MAX_ROOM_SIZE": 7}})),
+        ),
+        (Method::POST, "/admin/v1/modules/flickdd/start", None),
+    ] {
+        let (st, v) = call(&s, method, path, body).await;
+        assert_eq!(st, StatusCode::INTERNAL_SERVER_ERROR, "{path}: {v}");
+        assert_eq!(v["error"]["code"], "SETTINGS_WRITE_FAILED", "{path}: {v}");
+        let message = v["error"]["message"].as_str().unwrap();
+        assert!(message.contains("settings.json"), "{message}");
+        assert!(message.contains("Nothing was changed"), "{message}");
+        assert!(!message.contains(&dir), "no path: {message}");
+    }
+    assert_eq!(s.state.settings.revision(), before);
+    assert!(s.state.dd().is_none(), "the module did not start");
+}
+
+#[tokio::test]
+async fn a_server_reload_that_cannot_read_the_key_file_is_a_reload_failure() {
+    use axum::body::Body;
+    use axum::http::Request;
+    use tower::ServiceExt;
+
+    // No FLICKSYNC_AUTH_KEYS: the signing key is generated into the data directory.
+    let dir = flicksync::settings::scratch_dir("reload-keys");
+    let env_dir = dir.to_str().unwrap().to_owned();
+    let env: flicksync::settings::Env = std::sync::Arc::new(move |k| match k {
+        "FLICKSYNC_DATA_DIR" => Some(env_dir.clone()),
+        "PANEL_PASSWORD" => Some(PASSWORD.to_owned()),
+        _ => None,
+    });
+    let settings = flicksync::settings::Settings::open(&dir, env).unwrap();
+    let state = flicksync::app::AppState::new(settings).unwrap();
+    std::fs::write(dir.join(flicksync::invite::KEY_FILE), "").unwrap();
+
+    let resp = flicksync::app::build_router(state.clone())
+        .oneshot(
+            Request::builder()
+                .method(Method::POST)
+                .uri("/admin/v1/settings/server/reload")
+                .header("authorization", format!("Bearer {ADMIN}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::INTERNAL_SERVER_ERROR);
+    let bytes = axum::body::to_bytes(resp.into_body(), 1 << 20)
+        .await
+        .unwrap();
+    let v: Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(v["error"]["code"], "RELOAD_FAILED", "{v}");
+    let message = v["error"]["message"].as_str().unwrap();
+    assert!(message.contains("auth_keys"), "{message}");
+    assert!(message.contains("previous"), "{message}");
+    assert!(
+        !message.contains(dir.to_str().unwrap()),
+        "no path: {message}"
+    );
+    assert!(state.server().auth.has_keys(), "the old keys stay in force");
+    state.stop_all();
+}
+
+#[tokio::test]
+async fn auth_failures_say_what_is_missing() {
+    let s = server(&[]).await;
+    let (st, v) = s.http(Method::GET, "/admin/v1/modules", None, None).await;
+    assert_eq!(st, StatusCode::UNAUTHORIZED);
+    assert_eq!(v["error"]["code"], "UNAUTHENTICATED");
+    assert!(
+        v["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("Authorization: Bearer"),
+        "{v}"
+    );
+    let (st, v) = s
+        .http(
+            Method::GET,
+            "/admin/v1/modules",
+            Some("wrong-token-0123456789"),
+            None,
+        )
+        .await;
+    assert_eq!(st, StatusCode::UNAUTHORIZED);
+    assert_eq!(v["error"]["code"], "UNAUTHENTICATED");
+    let message = v["error"]["message"].as_str().unwrap();
+    assert!(message.contains("PANEL_PASSWORD"), "{message}");
+    assert!(!message.contains("wrong-token"), "{message}");
+}
+
+#[tokio::test]
+async fn a_stopped_or_failed_module_is_explained_on_its_admin_routes() {
+    let s = server(&[("FLICKSYNC_ENABLED", "false")]).await;
+    let (st, v) = call(&s, Method::GET, "/admin/v1/rooms", None).await;
+    assert_eq!(st, StatusCode::SERVICE_UNAVAILABLE);
+    assert_eq!(v["error"]["code"], "MODULE_DISABLED");
+    assert!(
+        v["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("POST /admin/v1/modules/flicksync/start"),
+        "{v}"
+    );
+
+    let (st, v) = call(&s, Method::GET, "/admin/v1/dd/overview", None).await;
+    assert_eq!(st, StatusCode::NOT_FOUND);
+    assert_eq!(v["error"]["code"], "DOWNLOAD_NOT_FOUND");
+    assert!(
+        v["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("POST /admin/v1/modules/flickdd/start"),
+        "{v}"
+    );
+
+    // Enabled without a backend: the reason is given, with what to do.
+    let (_, m) = call(&s, Method::POST, "/admin/v1/modules/flickdd/start", None).await;
+    let reason = m["message"].as_str().unwrap();
+    assert!(reason.contains("FLICKDD_JELLYFIN_URL"), "{reason}");
+    assert!(reason.contains("reload"), "{reason}");
+    let (_, v) = call(&s, Method::GET, "/admin/v1/dd/overview", None).await;
+    let message = v["error"]["message"].as_str().unwrap();
+    assert!(message.contains("failed to start"), "{message}");
+    assert!(message.contains("FLICKDD_JELLYFIN_URL"), "{message}");
 }
 
 #[tokio::test]
@@ -509,7 +770,14 @@ async fn a_refused_secret_write_never_echoes_the_value() {
     )
     .await;
     assert_eq!(st, StatusCode::BAD_REQUEST, "{v}");
-    assert_eq!(v["error"]["code"], "INVALID_PAYLOAD");
+    assert_eq!(v["error"]["code"], "SETTINGS_INVALID");
+    assert!(
+        v["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("FLICKSYNC_AUTH_KEYS"),
+        "{v}"
+    );
     assert!(!v.to_string().contains(MARKER), "server refusal body");
     assert_eq!(s.state.settings.lookup("FLICKSYNC_AUTH_KEYS"), keys_before);
 

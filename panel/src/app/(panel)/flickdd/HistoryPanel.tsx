@@ -3,16 +3,16 @@
 import { EmptyState, Notice, Panel, Pill, Spinner } from "@/components/flick/ui";
 import { BACKEND_LABEL, OUTCOME_LABEL, formatBytes, formatUtcDateTime } from "@/lib/format";
 import type { DdHistory } from "@/lib/types";
-import { ADMIN_ERROR_TEXT, useAdmin } from "@/lib/use-admin";
+import { useAdmin } from "@/lib/use-admin";
 
 export function HistoryPanel() {
-  const { data, error, loading } = useAdmin<DdHistory>("history", 10_000, "flickdd");
+  const { data, error, errorText, loading } = useAdmin<DdHistory>("history", 10_000, "flickdd");
   const list = data?.downloads ?? [];
 
   return (
     <Panel title="Recent downloads">
       {loading && !data && <Spinner label="Loading history" />}
-      {error && <Notice tone={data ? "warn" : "error"}>{ADMIN_ERROR_TEXT[error]}</Notice>}
+      {error && <Notice tone={data ? "warn" : "error"}>{errorText}</Notice>}
       {data && list.length === 0 && (
         <EmptyState title="Nothing finished yet">Finished downloads are listed here, newest first.</EmptyState>
       )}

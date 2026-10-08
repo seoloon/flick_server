@@ -2,33 +2,16 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 
-export type AdminErrorCode =
-  | "UNREACHABLE"
-  | "ADMIN_TOKEN_MISSING"
-  | "ADMIN_API_DISABLED"
-  | "ADMIN_TOKEN_REJECTED"
-  | "DD_DISABLED"
-  | "SIGNED_OUT"
-  | "UNKNOWN";
+import { ADMIN_ERROR_TEXT, type AdminErrorCode, adminError } from "./admin-errors";
 
-export const ADMIN_ERROR_TEXT: Record<AdminErrorCode, string> = {
-  UNREACHABLE:
-    "FlickSync is unreachable. Check that the server is running and that FLICKSYNC_URL points to it, then try again.",
-  ADMIN_TOKEN_MISSING:
-    "The panel has no FLICKSYNC_ADMIN_TOKEN. Add it to .env and restart the panel.",
-  ADMIN_API_DISABLED:
-    "FlickSync's admin API is off. Set FLICKSYNC_ADMIN_TOKEN on the server, then restart it.",
-  ADMIN_TOKEN_REJECTED:
-    "FlickSync rejected the admin token. Make sure the panel and FlickSync use the same FLICKSYNC_ADMIN_TOKEN.",
-  DD_DISABLED:
-    "FlickDD is off. Set FLICKDD_ENABLED=true and a backend on the server, then restart it.",
-  SIGNED_OUT: "Your session has ended. Sign in again.",
-  UNKNOWN: "Something went wrong while talking to FlickSync. Try again.",
-};
+export { ADMIN_ERROR_TEXT, type AdminErrorCode, adminError };
 
 export interface AdminState<T> {
   data: T | null;
-  error: AdminErrorCode | null;
+  /** The error code: the server's (e.g. MODULE_DISABLED) or one of the panel's own. */
+  error: string | null;
+  /** What to show for `error`: the server's message with its code, or the panel's text. */
+  errorText: string | null;
   loading: boolean;
   refresh: () => void;
 }
@@ -44,7 +27,7 @@ export function useAdmin<T>(
   base = "flicksync",
 ): AdminState<T> {
   const [data, setData] = useState<T | null>(null);
-  const [error, setError] = useState<AdminErrorCode | null>(null);
+  const [failure, setFailure] = useState<{ code: string; text: string } | null>(null);
   const [loading, setLoading] = useState(true);
   const inflight = useRef(false);
 
@@ -60,13 +43,12 @@ export function useAdmin<T>(
       const body = await res.json().catch(() => null);
       if (res.ok) {
         setData(body as T);
-        setError(null);
+        setFailure(null);
       } else {
-        const code = body?.error?.code as AdminErrorCode | undefined;
-        setError(code && code in ADMIN_ERROR_TEXT ? code : "UNKNOWN");
+        setFailure(adminError(body));
       }
     } catch {
-      setError("UNREACHABLE");
+      setFailure({ code: "UNREACHABLE", text: ADMIN_ERROR_TEXT.UNREACHABLE });
     } finally {
       inflight.current = false;
       setLoading(false);
@@ -86,5 +68,11 @@ export function useAdmin<T>(
     };
   }, [load, intervalMs]);
 
-  return { data, error, loading, refresh: load };
+  return {
+    data,
+    error: failure?.code ?? null,
+    errorText: failure?.text ?? null,
+    loading,
+    refresh: load,
+  };
 }

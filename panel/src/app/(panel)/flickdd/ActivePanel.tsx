@@ -5,7 +5,7 @@ import { useState } from "react";
 import { Button, Dialog, EmptyState, Notice, Panel, Pill, Spinner } from "@/components/flick/ui";
 import { BACKEND_LABEL, formatBytes, formatSpeed } from "@/lib/format";
 import type { DdActive, DdActiveDownload, DdOverview } from "@/lib/types";
-import { ADMIN_ERROR_TEXT, useAdmin } from "@/lib/use-admin";
+import { ADMIN_ERROR_TEXT, adminError, useAdmin } from "@/lib/use-admin";
 
 function percent(d: DdActiveDownload): number {
   return d.size > 0 ? Math.min(100, (d.covered / d.size) * 100) : 0;
@@ -34,7 +34,7 @@ export function ActivePanel() {
       } else if (res.status === 401) {
         window.location.assign("/login");
       } else {
-        setFailure("The download could not be cut. Try again.");
+        setFailure(`The download could not be cut. ${adminError(await res.json().catch(() => null)).text}`);
       }
     } catch {
       setFailure(ADMIN_ERROR_TEXT.UNREACHABLE);
@@ -47,7 +47,7 @@ export function ActivePanel() {
   const slots = overview.data
     ? `${list.length} of ${overview.data.limits.max_global} slots in use`
     : undefined;
-  const err = active.error;
+  const err = active.errorText;
 
   return (
     <Panel
@@ -57,7 +57,7 @@ export function ActivePanel() {
       }
     >
       {active.loading && !active.data && <Spinner label="Loading downloads" />}
-      {err && <Notice tone={active.data ? "warn" : "error"}>{ADMIN_ERROR_TEXT[err]}</Notice>}
+      {err && <Notice tone={active.data ? "warn" : "error"}>{err}</Notice>}
       {slots && (
         <p className="dl__meta" style={{ margin: 0 }}>
           {slots}

@@ -4,7 +4,7 @@ import { niceMax } from "@/components/charts";
 import { Notice, Panel, Spinner } from "@/components/flick/ui";
 import { BACKEND_LABEL, OUTCOME_LABEL, formatBytes, formatCount, formatUtcDate } from "@/lib/format";
 import type { DdStats } from "@/lib/types";
-import { ADMIN_ERROR_TEXT, useAdmin } from "@/lib/use-admin";
+import { useAdmin } from "@/lib/use-admin";
 
 function Tile({ label, value, sub }: { label: string; value: string; sub?: string }) {
   return (
@@ -55,11 +55,11 @@ function DayBars({ days }: { days: DdStats["days"] }) {
 }
 
 export function StatsPanel() {
-  const { data: s, error, loading } = useAdmin<DdStats>("stats", 10_000, "flickdd");
+  const { data: s, error, errorText, loading } = useAdmin<DdStats>("stats", 10_000, "flickdd");
 
   return (
     <>
-      {error && <Notice tone={s ? "warn" : "error"}>{ADMIN_ERROR_TEXT[error]}</Notice>}
+      {error && <Notice tone={s ? "warn" : "error"}>{errorText}</Notice>}
       {loading && !s && <Spinner label="Loading statistics" />}
       {s && (
         <>

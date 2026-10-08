@@ -3,7 +3,7 @@
 import { useState } from "react";
 
 import { Button, CopyButton, Dialog, Facts, Notice, Panel, Spinner } from "@/components/flick/ui";
-import { ADMIN_ERROR_TEXT, useAdmin } from "@/lib/use-admin";
+import { useAdmin } from "@/lib/use-admin";
 import type { Invite } from "@/lib/types";
 
 /** The link contains the signing key, so it stays masked until asked for. */
@@ -30,14 +30,14 @@ function QrCode({ rows }: { rows: string[] }) {
 
 export function InvitePanel() {
   // The invitation only changes on rotation or restart: a slow refresh is plenty.
-  const { data, error, loading } = useAdmin<Invite>("invite", 30_000);
+  const { data, error, errorText, loading } = useAdmin<Invite>("invite", 30_000);
   const [revealed, setRevealed] = useState(false);
   const [qr, setQr] = useState(false);
 
   return (
     <Panel title="Invitation link">
       {loading && !data && <Spinner label="Loading the invitation" />}
-      {error && !data && <Notice tone="error">{ADMIN_ERROR_TEXT[error]}</Notice>}
+      {error && !data && <Notice tone="error">{errorText}</Notice>}
       {data && (
         <>
           <p style={{ margin: 0, color: "var(--muted-foreground)", lineHeight: 1.6 }}>

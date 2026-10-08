@@ -20,7 +20,7 @@ use crate::invite::{self, InviteError};
 use crate::metrics::Metrics;
 use crate::modules::{ModuleId, Running, Slot, SlotState};
 use crate::room::RoomManager;
-use crate::settings::Settings;
+use crate::settings::{self, Settings};
 use crate::sync::{Clock, SystemClock};
 
 /// What FlickSync needs while it runs. Dropped (after `RoomManager::shutdown`) when it stops.
@@ -44,6 +44,66 @@ pub enum StartError {
     Keys(#[from] InviteError),
     #[error("{0}")]
     Auth(#[from] AuthConfigError),
+}
+
+/// The `message` of a module that failed to start: the reason, then what to do.
+fn failed_start(e: &ConfigError) -> String {
+    format!(
+        "{} Fix this setting, then reload the module.",
+        settings::explain(e)
+    )
+}
+
+impl StartError {
+    /// The admin API's answer to a failed server reload. An invalid value is the operator's to
+    /// fix (`SETTINGS_INVALID`); a key file that cannot be read or written is `RELOAD_FAILED`.
+    /// The message names the cause and never contains a secret or a filesystem path.
+    pub fn admin_error(&self) -> Error {
+        const KEEP: &str = "The previous server settings stay in force.";
+        let key_file = |what: String| {
+            Error::new(
+                ErrorCode::ReloadFailed,
+                format!(
+                    "The server settings were not applied: the signing key file {} in the data directory {what}. {KEEP}",
+                    invite::KEY_FILE
+                ),
+            )
+        };
+        match self {
+            StartError::Config(e @ ConfigError::File { .. }) => Error::new(
+                ErrorCode::ReloadFailed,
+                format!(
+                    "The server settings were not applied: {} {KEEP}",
+                    settings::explain(e)
+                ),
+            ),
+            StartError::Config(e) => Error::new(
+                ErrorCode::SettingsInvalid,
+                format!(
+                    "The server settings were not applied: {} {KEEP} Correct the value, then reload again.",
+                    settings::explain(e)
+                ),
+            ),
+            StartError::Auth(e) => Error::new(
+                ErrorCode::SettingsInvalid,
+                format!(
+                    "The server settings were not applied: {} {KEEP}",
+                    settings::explain_keys(e)
+                ),
+            ),
+            StartError::Keys(InviteError::Io { source, .. }) => key_file(format!(
+                "cannot be read or created ({}); check that the data volume is writable by the server",
+                source.kind()
+            )),
+            StartError::Keys(InviteError::Key(e)) => key_file(format!(
+                "has an invalid entry ({e}); restore a backup of it"
+            )),
+            StartError::Keys(_) => key_file(
+                "holds no usable key; restore a backup of it, or delete it to generate a new key (clients will then need the new invitation link)"
+                    .to_owned(),
+            ),
+        }
+    }
 }
 
 /// Applies a new tracing filter to the running subscriber.
@@ -161,7 +221,7 @@ impl AppState {
     }
 
     fn build_sync(&self) -> Result<SyncRuntime, String> {
-        let cfg = self.settings.config().map_err(|e| e.to_string())?;
+        let cfg = self.settings.config().map_err(|e| failed_start(&e))?;
         let manager = Arc::new(RoomManager::new(
             cfg.manager.clone(),
             self.clock.clone(),
@@ -175,9 +235,11 @@ impl AppState {
     }
 
     fn build_dd(&self) -> Result<Arc<DdState>, String> {
-        let cfg = self.settings.dd_config().map_err(|e| e.to_string())?;
+        let cfg = self.settings.dd_config().map_err(|e| failed_start(&e))?;
         if !cfg.enabled {
-            return Err("FlickDD is not enabled".to_owned());
+            return Err(
+                "FLICKDD_ENABLED is off. Start the module again to switch it on.".to_owned(),
+            );
         }
         Ok(DdState::new(cfg))
     }
@@ -382,4 +444,48 @@ pub async fn serve(state: AppState) -> Result<(), Box<dyn std::error::Error>> {
     }
     sweeper.abort();
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_reload_error_tells_an_invalid_value_from_an_unusable_key_file() {
+        let invalid = StartError::Config(ConfigError::Invalid {
+            name: "FLICKSYNC_AUTH_LEEWAY".into(),
+            value: "soon".into(),
+            reason: "invalid digit found in string".into(),
+        })
+        .admin_error();
+        assert_eq!(invalid.code, ErrorCode::SettingsInvalid);
+        assert!(
+            invalid.message.contains("FLICKSYNC_AUTH_LEEWAY"),
+            "{invalid}"
+        );
+        assert!(invalid.message.contains("previous"), "{invalid}");
+
+        let keys = StartError::Auth(AuthConfigError::DuplicateKid("main".into())).admin_error();
+        assert_eq!(keys.code, ErrorCode::SettingsInvalid);
+        assert!(keys.message.contains("FLICKSYNC_AUTH_KEYS"), "{keys}");
+
+        for e in [
+            StartError::Keys(InviteError::Io {
+                path: "/very/private/data/auth_keys".into(),
+                source: std::io::Error::from(std::io::ErrorKind::PermissionDenied),
+            }),
+            StartError::Keys(InviteError::Invalid(
+                "/very/private/data/auth_keys exists but holds no key".into(),
+            )),
+            StartError::Config(ConfigError::File {
+                path: "/very/private/keys".into(),
+                source: std::io::Error::from(std::io::ErrorKind::NotFound),
+            }),
+        ] {
+            let err = e.admin_error();
+            assert_eq!(err.code, ErrorCode::ReloadFailed, "{err}");
+            assert!(!err.message.contains("/very/private"), "{err}");
+            assert!(err.message.contains("previous"), "{err}");
+        }
+    }
 }

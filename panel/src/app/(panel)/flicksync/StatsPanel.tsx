@@ -6,7 +6,7 @@ import { LineChart, type Series } from "@/components/charts";
 import { Notice, Panel, Segmented, Spinner } from "@/components/flick/ui";
 import { formatCount, formatDuration, formatMs, formatPercent } from "@/lib/format";
 import type { Overview, Sample, Stats } from "@/lib/types";
-import { ADMIN_ERROR_TEXT, useAdmin } from "@/lib/use-admin";
+import { useAdmin } from "@/lib/use-admin";
 
 type Range = "10" | "30" | "60";
 
@@ -121,12 +121,12 @@ export function StatsPanel() {
     return { times, activity, latency, corrections, traffic };
   }, [s, range]);
 
-  const err = stats.error ?? overview.error;
+  const err = stats.error ? stats.errorText : overview.errorText;
 
   return (
     <>
-      {err && !s && <Notice tone="error">{ADMIN_ERROR_TEXT[err]}</Notice>}
-      {err && s && <Notice tone="warn">{ADMIN_ERROR_TEXT[err]}</Notice>}
+      {err && !s && <Notice tone="error">{err}</Notice>}
+      {err && s && <Notice tone="warn">{err}</Notice>}
       {stats.loading && !s && <Spinner label="Loading statistics" />}
 
       <div className="tiles">

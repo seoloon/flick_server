@@ -1,17 +1,43 @@
 # Admin API
 
-Operator endpoints used by the [web panel](../panel/README.md). Disabled (`404`) unless `PANEL_PASSWORD` has 10+
+Operator endpoints used by the [web panel](../panel/README.md). Disabled (a bare `404`, no body) unless `PANEL_PASSWORD` has 10+
 characters (or the legacy `FLICKSYNC_ADMIN_TOKEN` alone is set); the token is `hex(HMAC-SHA256(PANEL_PASSWORD, "flick-admin-api-v1"))`. The old `FLICKSYNC_ADMIN_TOKEN` still
 works and is deprecated.
 
 * Password length is measured in bytes server-side, while the panel counts characters; `PANEL_PASSWORD` is trimmed
   server-side, so derive the token from the trimmed value.
-* Every call needs `Authorization: Bearer <token>`, compared in constant time. Anything else is `401`
-  (and counts in `auth_failures_total`).
+* Every call needs `Authorization: Bearer <token>`, compared in constant time. Anything else is
+  `401 UNAUTHENTICATED` (and counts in `auth_failures_total`); the message tells a missing token from a refused one.
 * Every response of every `/admin/v1/*` route is `Cache-Control: no-store`: successes, `204`s and errors alike. There is no CORS: call it from a server, never from a browser, and
   keep the token out of client code. The panel's server does exactly that.
 * One of these endpoints returns the invitation link, i.e. the signing key. Treat the token like the key.
 * Do not expose `/admin` through the reverse proxy.
+
+## Errors
+
+Every error has the body `{"error": {"code": "SETTINGS_INVALID", "message": "..."}}`. `code` is stable: branch on it.
+`message` is an English sentence meant to be shown as is in the panel: it says what happened and what to do, names the
+setting involved and the expected values, and may change between versions. It never contains a secret value or a
+filesystem path (only the file names `settings.json` and `auth_keys`). The server logs keep the technical details.
+
+| Code | HTTP | Returned by | Meaning |
+|---|---|---|---|
+| `UNAUTHENTICATED` | 401 | every route | No `Authorization: Bearer` token, or a token not derived from the server's `PANEL_PASSWORD` |
+| `UNKNOWN_SCOPE` | 404 | `GET`/`PUT /settings/{scope}` | The scope is not `server`, `flicksync` or `flickdd`; the message lists the valid ones |
+| `UNKNOWN_MODULE` | 404 | `POST /modules/{id}/{action}` | The module is not `flicksync` or `flickdd`; the message lists the valid ones |
+| `UNKNOWN_ACTION` | 404 | `POST /modules/{id}/{action}` | The action is not `start`, `stop` or `reload`; the message lists the valid ones |
+| `INVALID_PAYLOAD` | 400 | `PUT /settings/{scope}` | The body is not JSON, lacks `Content-Type: application/json`, is not `{"values": {...}}`, or a value is an array or an object |
+| `UNKNOWN_SETTING` | 400 | `PUT /settings/{scope}` | A name is not a setting of this scope: unknown, boot-only (environment only), or of another scope (the message says which) |
+| `SETTINGS_INVALID` | 400 | `PUT /settings/{scope}`, `POST /settings/server/reload` | A value, or the merged result, fails validation (the message names the setting, what is wrong and what is expected); nothing was written. On a reload: the stored server settings are invalid, the previous ones stay in force |
+| `SETTINGS_WRITE_FAILED` | 500 | `PUT /settings/{scope}`, `POST /modules/{id}/start` and `/stop` | `settings.json` in the data directory cannot be written (read-only or full volume, permissions); nothing changed |
+| `RELOAD_FAILED` | 500 | `POST /settings/server/reload` | The settings are valid but cannot be applied: the signing key file `auth_keys` (or the file named by `FLICKSYNC_AUTH_KEYS_FILE`) cannot be read or created, is empty or has an invalid entry. The previous settings stay in force |
+| `MODULE_DISABLED` | 503 | `GET /rooms`, `DELETE /rooms/{id}`, `GET /stats` | FlickSync is not running: the message says whether it is stopped or failed to start, and why |
+| `ROOM_NOT_FOUND` | 404 | `DELETE /rooms/{id}` | No live room has this id |
+| `DOWNLOAD_NOT_FOUND` | 404 | `/dd/*` | FlickDD is not running (stopped, or failed to start: the message says why), or `DELETE /dd/{id}`: no such download in progress |
+| `INTERNAL` | 500 | `GET /invite`, `GET /dd/stats` | The invitation cannot be built from the key in force, or an unexpected condition; details in the server logs |
+
+A module that fails to start is not an HTTP error: the action answers `200` with `state: "failed"` and the reason in
+the status `message`, written the same way (setting, problem, expected value, then what to do).
 
 ## Endpoints
 
@@ -116,7 +142,7 @@ environment.
 ```json
 { "modules": [
   { "id": "flicksync", "state": "running", "message": null, "enabled": true, "pending_reload": false, "since": 1790959000000 },
-  { "id": "flickdd", "state": "failed", "message": "invalid value", "enabled": true, "pending_reload": false, "since": null }
+  { "id": "flickdd", "state": "failed", "message": "FlickDD needs at least one backend: set FLICKDD_JELLYFIN_URL and FLICKDD_JELLYFIN_API_KEY, or FLICKDD_PLEX_URL and FLICKDD_PLEX_TOKEN. Fix this setting, then reload the module.", "enabled": true, "pending_reload": false, "since": null }
 ] }
 ```
 
@@ -135,12 +161,12 @@ An unparseable `FLICKDD_ENABLED` in the environment (`perhaps`, say) counts as o
 naming the variable rather than silently `stopped`; `stop`, or a `PUT` of a valid value, stores a switch that wins
 over the environment. (An unparseable `FLICKSYNC_ENABLED` stops the process at boot, like any invalid shared setting.)
 A `PUT` never stores an unparseable switch.
-Errors: `404` for an unknown module id or action, `500 INTERNAL` when the settings file cannot be written, `401`
-without the token.
+Errors: `404 UNKNOWN_MODULE` or `404 UNKNOWN_ACTION`, `500 SETTINGS_WRITE_FAILED` when `settings.json` cannot be
+written (the module is then left as it was), `401 UNAUTHENTICATED` without the token.
 
 ### `GET /admin/v1/settings/{scope}`
 
-`scope` is `server`, `flicksync` or `flickdd` (anything else: `404`). Answer:
+`scope` is `server`, `flicksync` or `flickdd` (anything else: `404 UNKNOWN_SCOPE`). Answer:
 
 ```json
 { "scope": "flicksync", "revision": 3, "fields": [
@@ -165,22 +191,26 @@ exists.
 Partial update: a name with a value stores it (strings, numbers and booleans are all accepted as scalars), `null`
 removes the stored value (back to environment or default), an omitted name is untouched. The merged result is
 validated as a whole and nothing is written on failure. Answer `200`: the new settings view. Changes to a running
-module show as `pending_reload` until it is reloaded. Errors: `400 INVALID_PAYLOAD` for a body that is not
-`{"values": {...}}`, a non-scalar value, an unknown field, a field that belongs to another scope (for example
-`FLICKSYNC_METRICS_TOKEN` is a `server` setting) or a value that fails validation; `404` for an unknown scope;
-`500 INTERNAL` when the file cannot be written.
+module show as `pending_reload` until it is reloaded. Errors (nothing is written for any of them):
+`400 INVALID_PAYLOAD` for a body that is not `{"values": {...}}` or a non-scalar value; `400 UNKNOWN_SETTING` for an
+unknown field, a boot-only one or one that belongs to another scope (for example `FLICKSYNC_METRICS_TOKEN` is a
+`server` setting); `400 SETTINGS_INVALID` for a value that fails validation, for example
+`FLICKSYNC_MAX_ROOM_SIZE has an invalid value 'ten' (invalid digit found in string). Expected a whole number (0 or more). Nothing was saved.`;
+`404 UNKNOWN_SCOPE`; `500 SETTINGS_WRITE_FAILED` when `settings.json` cannot be written.
 
 ### `POST /admin/v1/settings/server/reload`
 
 Re-reads the server scope and applies it live: signing keys, public address, CORS origins, metrics and log level.
-Modules keep running. Answer `200`: `{"reloaded": true}`. An invalid stored configuration answers `400 INVALID_PAYLOAD`
-and the previous one stays active.
+Modules keep running. Answer `200`: `{"reloaded": true}`. On failure the previous settings stay active: an invalid
+stored configuration answers `400 SETTINGS_INVALID`, a signing key file that cannot be read, created or used answers
+`500 RELOAD_FAILED`.
 
 ## FlickDD
 
 The five `dd` routes expose [FlickDD](flickdd-integration.md) downloads. While the FlickDD module is stopped
-(its persisted switch is off) all five answer `404` with `{"error":{"code":"DOWNLOAD_NOT_FOUND","message":"FlickDD is disabled"}}`,
-so the panel can tell "off" from "no data". Download tokens are never part of any response. `user_id` is the key
+(or failed to start) all five answer `404` with
+`{"error":{"code":"DOWNLOAD_NOT_FOUND","message":"FlickDD is stopped. Start it with POST /admin/v1/modules/flickdd/start."}}`
+(when it failed to start, the message gives the reason instead), so the panel can tell "off" from "no data". Download tokens are never part of any response. `user_id` is the key
 `"{server_id}/{user_id}"` (a user id is only unique per Flick server), `user_name` the display name from the token.
 
 ### `GET /admin/v1/dd/overview`

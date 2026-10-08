@@ -13,7 +13,7 @@ import {
   stateLabel,
 } from "@/lib/format";
 import type { AdminRoom, RoomsResponse } from "@/lib/types";
-import { ADMIN_ERROR_TEXT, useAdmin } from "@/lib/use-admin";
+import { ADMIN_ERROR_TEXT, adminError, useAdmin } from "@/lib/use-admin";
 
 /** Idle longer than this earns a caution pill: the room is up but nobody is doing anything. */
 const IDLE_WARN_SECS = 10 * 60;
@@ -113,7 +113,7 @@ function RoomRow({
 }
 
 export function RoomsPanel() {
-  const { data, error, loading, refresh } = useAdmin<RoomsResponse>("rooms", 3_000);
+  const { data, error, errorText, loading, refresh } = useAdmin<RoomsResponse>("rooms", 3_000);
   const [openId, setOpenId] = useState<string | null>(null);
   const [target, setTarget] = useState<AdminRoom | null>(null);
   const [busy, setBusy] = useState(false);
@@ -133,7 +133,7 @@ export function RoomsPanel() {
       } else if (res.status === 401) {
         window.location.assign("/login");
       } else {
-        setFailure("The room could not be closed. Try again.");
+        setFailure(`The room could not be closed. ${adminError(await res.json().catch(() => null)).text}`);
       }
     } catch {
       setFailure(ADMIN_ERROR_TEXT.UNREACHABLE);
@@ -152,7 +152,7 @@ export function RoomsPanel() {
       }
     >
       {loading && !data && <Spinner label="Loading rooms" />}
-      {error && <Notice tone={data ? "warn" : "error"}>{ADMIN_ERROR_TEXT[error]}</Notice>}
+      {error && <Notice tone={data ? "warn" : "error"}>{errorText}</Notice>}
       {data && rooms.length === 0 && (
         <EmptyState title="No rooms right now">
           Rooms appear here as soon as someone starts a Watch Together session.

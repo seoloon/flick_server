@@ -55,7 +55,7 @@ fn backend(
             secret,
         })),
         _ => Err(ConfigError::Inconsistent(format!(
-            "{label} backend needs both {url_var} and {secret_var}, or neither"
+            "the {label} backend is half configured: set both {url_var} and {secret_var}, or clear both"
         ))),
     }
 }
@@ -117,7 +117,7 @@ impl DdConfig {
     fn validate_backend(&self) -> Result<(), ConfigError> {
         if self.jellyfin.is_none() && self.plex.is_none() {
             return Err(ConfigError::Inconsistent(
-                "FLICKDD_ENABLED=true requires at least one backend (Jellyfin or Plex)".to_owned(),
+                "FlickDD needs at least one backend: set FLICKDD_JELLYFIN_URL and FLICKDD_JELLYFIN_API_KEY, or FLICKDD_PLEX_URL and FLICKDD_PLEX_TOKEN".to_owned(),
             ));
         }
         Ok(())
@@ -130,27 +130,37 @@ impl DdConfig {
     }
 
     fn validate_limits(&self) -> Result<(), ConfigError> {
-        let inconsistent = |m: &str| Err(ConfigError::Inconsistent(m.to_owned()));
+        const MIB: u64 = 1024 * 1024;
         let c = self;
-        if c.max_parallel == 0
-            || c.max_global == 0
-            || c.rate_bps == 0
-            || c.chunk_bytes == 0
-            || c.max_range_bytes == 0
-            || c.max_requests_per_min == 0
-            || c.max_overserve == 0
-            || c.stall_timeout_ms == 0
-            || c.upstream_timeout_ms == 0
-        {
-            return inconsistent(
-                "FLICKDD limits (parallel, global, rate, chunk, range, requests/min, overserve, stall and upstream timeouts) must be >= 1",
-            );
+        for (name, zero) in [
+            ("FLICKDD_MAX_PARALLEL", c.max_parallel == 0),
+            ("FLICKDD_MAX_GLOBAL", c.max_global == 0),
+            ("FLICKDD_RATE_MBPS", c.rate_bps == 0),
+            ("FLICKDD_CHUNK_MB", c.chunk_bytes == 0),
+            ("FLICKDD_MAX_RANGE_MB", c.max_range_bytes == 0),
+            ("FLICKDD_MAX_REQUESTS_PER_MIN", c.max_requests_per_min == 0),
+            ("FLICKDD_MAX_OVERSERVE", c.max_overserve == 0),
+            ("FLICKDD_STALL_TIMEOUT", c.stall_timeout_ms == 0),
+            ("FLICKDD_UPSTREAM_TIMEOUT", c.upstream_timeout_ms == 0),
+        ] {
+            if zero {
+                return Err(ConfigError::Inconsistent(format!(
+                    "{name} must be at least 1; it is now 0"
+                )));
+            }
         }
         if c.chunk_bytes > c.max_range_bytes {
-            return inconsistent("FLICKDD_CHUNK_MB must not exceed FLICKDD_MAX_RANGE_MB");
+            return Err(ConfigError::Inconsistent(format!(
+                "FLICKDD_CHUNK_MB ({}) must not exceed FLICKDD_MAX_RANGE_MB ({})",
+                c.chunk_bytes / MIB,
+                c.max_range_bytes / MIB
+            )));
         }
         if c.max_parallel > c.max_global {
-            return inconsistent("FLICKDD_MAX_PARALLEL must not exceed FLICKDD_MAX_GLOBAL");
+            return Err(ConfigError::Inconsistent(format!(
+                "FLICKDD_MAX_PARALLEL ({}) must not exceed FLICKDD_MAX_GLOBAL ({})",
+                c.max_parallel, c.max_global
+            )));
         }
         Ok(())
     }
