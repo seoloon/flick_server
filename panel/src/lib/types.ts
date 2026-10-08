@@ -7,6 +7,8 @@ export interface Overview {
   version: string;
   now: number;
   uptime_secs: number;
+  /** False while FlickSync is stopped; its counters are then zero. */
+  running: boolean;
   accepting: boolean;
   ready: boolean;
   rooms: number;
@@ -186,4 +188,51 @@ export interface DdStats {
   by_backend: Record<string, { bytes: number; downloads: number; completed: number }>;
   by_outcome: Record<string, number>;
   rejected: Record<string, number>;
+}
+
+// Module lifecycle and settings (/admin/v1/modules, /admin/v1/settings).
+
+export type ModuleId = "flicksync" | "flickdd";
+export type ModuleState = "stopped" | "running" | "failed";
+
+export interface ModuleStatus {
+  id: ModuleId;
+  state: ModuleState;
+  /** Why the module failed to start; null otherwise. */
+  message: string | null;
+  /** The persisted on/off switch. */
+  enabled: boolean;
+  /** Running with older settings than the ones saved. */
+  pending_reload: boolean;
+  /** Start time (ms since the epoch) while running, else null. */
+  since: number | null;
+}
+
+export interface ModulesResponse {
+  modules: ModuleStatus[];
+}
+
+export type SettingsScope = "server" | "flicksync" | "flickdd";
+export type FieldKind = "bool" | "int" | "float" | "text" | "choice" | "list" | "secret";
+export type FieldSource = "panel" | "environment" | "default";
+
+export interface SettingField {
+  name: string;
+  kind: FieldKind;
+  secret: boolean;
+  /** Current value; always null for a secret. */
+  value: string | null;
+  /** A value exists in the panel or the environment. */
+  set: boolean;
+  source: FieldSource;
+  /** Code default; always null for a secret. */
+  default: string | null;
+  /** Present for `choice` fields only. */
+  choices?: string[];
+}
+
+export interface SettingsView {
+  scope: SettingsScope;
+  revision: number;
+  fields: SettingField[];
 }
