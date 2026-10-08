@@ -99,6 +99,8 @@ pub struct Config {
     pub http: HttpConfig,
     pub sweep_interval_ms: u64,
     pub shutdown_grace_secs: u64,
+    /// Log lines kept in memory for the panel (`FLICKSYNC_LOG_BUFFER`, 0 = none). Boot-only.
+    pub log_buffer: usize,
     /// FlickSync starts at boot (FLICKSYNC_ENABLED, default false).
     pub sync_enabled: bool,
     /// Where the auto-generated signing key lives (`FLICKSYNC_DATA_DIR`).
@@ -388,6 +390,13 @@ impl Config {
                 });
             }
         };
+        let log_buffer = parse(env, "FLICKSYNC_LOG_BUFFER", crate::logs::DEFAULT_CAPACITY)?;
+        if log_buffer > crate::logs::MAX_CAPACITY {
+            return Err(ConfigError::Inconsistent(format!(
+                "FLICKSYNC_LOG_BUFFER must be from 0 (keep no log lines for the panel) to {} lines; it is now {log_buffer}",
+                crate::logs::MAX_CAPACITY
+            )));
+        }
 
         let public = match env("FLICKSYNC_PUBLIC_URL").filter(|v| !v.trim().is_empty()) {
             None => None,
@@ -411,6 +420,7 @@ impl Config {
             http,
             sweep_interval_ms: parse(env, "FLICKSYNC_SWEEP_INTERVAL_MS", 1000)?,
             shutdown_grace_secs: parse(env, "FLICKSYNC_SHUTDOWN_GRACE", 10)?,
+            log_buffer,
             sync_enabled: parse_bool(env, "FLICKSYNC_ENABLED", false)?,
             data_dir: parse(env, "FLICKSYNC_DATA_DIR", "./data".to_owned())?,
             keys_configured,
@@ -530,6 +540,29 @@ mod tests {
         assert!(cfg(&[("FLICKSYNC_ADMIN_TOKEN", "short")]).is_err());
         let c = cfg(&[("FLICKSYNC_ADMIN_TOKEN", "0123456789abcdef0123")]).unwrap();
         assert_eq!(c.http.admin_token.as_deref(), Some("0123456789abcdef0123"));
+    }
+
+    #[test]
+    fn log_buffer_is_a_bounded_number_of_lines() {
+        assert_eq!(cfg(&[]).unwrap().log_buffer, crate::logs::DEFAULT_CAPACITY);
+        assert_eq!(cfg(&[("FLICKSYNC_LOG_BUFFER", "0")]).unwrap().log_buffer, 0);
+        assert_eq!(
+            cfg(&[("FLICKSYNC_LOG_BUFFER", "10000")])
+                .unwrap()
+                .log_buffer,
+            10_000
+        );
+        let e = cfg(&[("FLICKSYNC_LOG_BUFFER", "10001")])
+            .unwrap_err()
+            .to_string();
+        assert!(
+            e.contains("FLICKSYNC_LOG_BUFFER") && e.contains("10000"),
+            "{e}"
+        );
+        let e = cfg(&[("FLICKSYNC_LOG_BUFFER", "lots")])
+            .unwrap_err()
+            .to_string();
+        assert!(e.contains("FLICKSYNC_LOG_BUFFER"), "{e}");
     }
 
     #[test]
