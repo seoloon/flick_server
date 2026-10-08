@@ -192,3 +192,21 @@ test("the PUT body is checked before it is forwarded", () => {
     if (!r.ok) assert.ok(r.message.length > 0);
   }
 });
+
+test("an emptied number, choice or switch is a Reset, an emptied text is sent as is", () => {
+  assert.deepEqual(buildPatch(VIEW, { FLICKDD_MAX_GLOBAL: "" }), { FLICKDD_MAX_GLOBAL: null });
+  assert.deepEqual(buildPatch(VIEW, { FLICKDD_MAX_GLOBAL: "  " }), { FLICKDD_MAX_GLOBAL: null });
+  assert.deepEqual(buildPatch(VIEW, { FLICKDD_MAX_PARALLEL: "" }), {});
+  assert.deepEqual(buildPatch(VIEW, { FLICKDD_JELLYFIN_URL: "" }), { FLICKDD_JELLYFIN_URL: "" });
+});
+
+test("a cleared text field warns that the empty value hides the environment", () => {
+  const url = byName("FLICKDD_JELLYFIN_URL");
+  const hint = fieldHint(url, fieldDisplay(url, { FLICKDD_JELLYFIN_URL: "" }));
+  assert.match(hint, /An empty value saved here hides the environment value\. Use Reset to go back to it\./);
+  assert.doesNotMatch(fieldHint(url, fieldDisplay(url, {})), /empty value/);
+});
+
+test("unit labels keep their usual casing", () => {
+  assert.equal(fieldLabel("FLICKDD_RATE_MBPS"), "Rate Mbps");
+});

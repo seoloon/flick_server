@@ -25,6 +25,7 @@ export function SettingsForm({ scope }: { scope: SettingsScope }) {
   const [failure, setFailure] = useState<AdminError | null>(null);
   const [savedRevision, setSavedRevision] = useState<number | null>(null);
   const [applied, setApplied] = useState(false);
+  const [discards, setDiscards] = useState(0); // remounts the rows, closing open secret inputs
 
   const view = settings.data;
   if (!view) {
@@ -115,7 +116,7 @@ export function SettingsForm({ scope }: { scope: SettingsScope }) {
         <div className="settings-list">
           {visibleFields(view).map((f) => (
             <FieldRow
-              key={`${f.name}:${view.revision}`}
+              key={`${f.name}:${view.revision}:${discards}`}
               field={f}
               edits={edits}
               flagged={flagged.includes(f.name)}
@@ -159,6 +160,7 @@ export function SettingsForm({ scope }: { scope: SettingsScope }) {
               onClick={() => {
                 setEdits({});
                 setFailure(null);
+                setDiscards((n) => n + 1);
               }}
               disabled={changes === 0 || busy !== null}
             >

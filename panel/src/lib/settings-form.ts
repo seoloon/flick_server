@@ -41,7 +41,7 @@ export function parseBool(v: string | null | undefined): boolean | null {
   return null;
 }
 
-const ACRONYMS = new Set(["API", "CORS", "JWT", "MB", "MBPS", "TTL", "URL", "WS"]);
+const ACRONYMS = new Set(["API", "CORS", "JWT", "MB", "TTL", "URL", "WS"]);
 
 /** "FLICKSYNC_MAX_ROOM_SIZE" -> "Max room size", "FLICKDD_JELLYFIN_API_KEY" -> "Jellyfin API key". */
 export function fieldLabel(name: string): string {
@@ -49,6 +49,7 @@ export function fieldLabel(name: string): string {
   return words
     .map((w, i) => {
       if (ACRONYMS.has(w)) return w;
+      if (w === "MBPS") return "Mbps";
       const lower = w.toLowerCase();
       return i === 0 ? lower.charAt(0).toUpperCase() + lower.slice(1) : lower;
     })
@@ -91,13 +92,16 @@ export function undoEdit(edits: Edits, name: string): Edits {
   return next;
 }
 
+const EMPTY_IS_RESET: readonly string[] = ["int", "float", "choice", "bool"];
+
 /** The `values` of PUT /settings/<scope>: real changes to fields the form shows, nothing else. */
 export function buildPatch(view: SettingsView, edits: Edits): Record<string, string | null> {
   const values: Record<string, string | null> = {};
   for (const f of visibleFields(view)) {
     const e = edits[f.name];
     if (e === undefined) continue;
-    if (e === null) {
+    if (e === null || (e.trim() === "" && EMPTY_IS_RESET.includes(f.kind))) {
+      // An emptied number, choice or switch would be stored as "" and hide the environment: reset instead.
       if (f.source === "panel") values[f.name] = null;
     } else if (f.secret ? e !== "" : !sameValue(f, e)) {
       values[f.name] = e;
@@ -146,6 +150,13 @@ export function fieldHint(field: SettingField, d: FieldDisplay): string {
     }
   }
   if (field.kind === "list") parts.push("comma-separated");
+  if (d.changed && d.value === "" && !field.secret) {
+    parts.push(
+      EMPTY_IS_RESET.includes(field.kind)
+        ? "Save resets it to the environment value or the default"
+        : "An empty value saved here hides the environment value. Use Reset to go back to it.",
+    );
+  }
   return parts.join(" · ");
 }
 
