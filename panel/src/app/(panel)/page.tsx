@@ -1,91 +1,73 @@
-import { ButtonLink, Notice, Pill } from "@/components/flick/ui";
-import { PageHeader, Panel } from "@/components/flick/ui";
+import type { ReactNode } from "react";
+
+import { ButtonLink, Notice, PageHeader, Panel, Pill } from "@/components/flick/ui";
+import { adminError } from "@/lib/admin-errors";
 import { BACKEND_LABEL, formatBytes, formatCount, formatDuration } from "@/lib/format";
-import { adminFetch, ddFetch, type UpstreamResult } from "@/lib/flicksync";
-import { MODULES } from "@/lib/modules";
-import type { DdOverview, Overview } from "@/lib/types";
+import { adminFetch, ddFetch } from "@/lib/flicksync";
+import type { DdOverview, ModuleId, Overview } from "@/lib/types";
 
 import { InvitePanel } from "./InvitePanel";
+import { ModulesOverview } from "./ModulesOverview";
 
 export const metadata = { title: "Overview" };
 
-function status<T>(res: UpstreamResult) {
-  if (res.status === 200) return { data: res.body as T };
-  const code = (res.body as { error?: { code?: string } } | null)?.error?.code ?? "UNREACHABLE";
-  return { code };
-}
+const counted = (n: number, one: string, many: string) => `${formatCount(n)} ${n === 1 ? one : many}`;
 
 export default async function OverviewPage() {
   const [sync, dd] = await Promise.all([adminFetch("overview"), ddFetch("overview")]);
-  const syncStatus = status<Overview>(sync);
-  const ddStatus = status<DdOverview>(dd);
-  const o = "data" in syncStatus ? syncStatus.data : null;
-  const d = "data" in ddStatus ? ddStatus.data : null;
-  const ddOff = "code" in ddStatus && ddStatus.code === "DD_DISABLED";
+  const o = sync.status === 200 ? (sync.body as Overview) : null;
+  const d = dd.status === 200 ? (dd.body as DdOverview) : null;
+
+  // Live figures for the module cards, shown only while the module runs.
+  const extras: Partial<Record<ModuleId, ReactNode>> = {
+    flicksync: o?.running ? (
+      <div className="pill-row">
+        <Pill>{counted(o.rooms, "room", "rooms")}</Pill>
+        <Pill>{counted(o.participants, "participant", "participants")}</Pill>
+        <Pill>
+          {formatCount(o.connections)} of {formatCount(o.max_connections)} connections
+        </Pill>
+      </div>
+    ) : null,
+    flickdd: d ? (
+      <div className="pill-row">
+        {(["jellyfin", "plex"] as const)
+          .filter((b) => d.backends[b])
+          .map((b) => (
+            <Pill key={b}>{BACKEND_LABEL[b]}</Pill>
+          ))}
+        <Pill>
+          {formatCount(d.active)} / {formatCount(d.limits.max_global)} active
+        </Pill>
+        <Pill>{counted(d.totals.downloads, "download", "downloads")}</Pill>
+        <Pill>{formatBytes(d.totals.bytes_served)} served</Pill>
+      </div>
+    ) : null,
+  };
 
   return (
     <div className="panel-page">
-      <PageHeader title="Overview" lead="Your Flick Server components at a glance." />
+      <PageHeader title="Overview" lead="Your Flick Server and its modules at a glance." />
+      <Panel
+        title="Server"
+        actions={
+          <ButtonLink href="/settings/server" size="sm" icon="settings">
+            Server Settings
+          </ButtonLink>
+        }
+      >
+        {o ? (
+          <div className="pill-row">
+            <Pill tone={o.ready ? "strong" : "warn"}>{o.ready ? "Online" : "Not ready"}</Pill>
+            <Pill>v{o.version}</Pill>
+            <Pill>Up {formatDuration(o.uptime_secs)}</Pill>
+          </div>
+        ) : (
+          <Notice tone="error">{adminError(sync.body).text}</Notice>
+        )}
+      </Panel>
       <InvitePanel />
-      {MODULES.map((m) => (
-        <Panel
-          key={m.id}
-          title={m.label}
-          actions={
-            <ButtonLink href={m.href} variant="primary" size="sm">
-              Open
-            </ButtonLink>
-          }
-        >
-          <p style={{ margin: 0, color: "var(--muted-foreground)" }}>{m.summary}</p>
-          {m.id === "flicksync" &&
-            (o ? (
-              <div style={{ display: "flex", flexWrap: "wrap", gap: "0.5rem", alignItems: "center" }}>
-                <Pill tone={o.ready ? "strong" : "warn"}>{o.ready ? "Online" : "Not ready"}</Pill>
-                <Pill>v{o.version}</Pill>
-                <Pill>
-                  {formatCount(o.rooms)} {o.rooms === 1 ? "room" : "rooms"}
-                </Pill>
-                <Pill>
-                  {formatCount(o.participants)} {o.participants === 1 ? "participant" : "participants"}
-                </Pill>
-                <Pill>Up {formatDuration(o.uptime_secs)}</Pill>
-              </div>
-            ) : (
-              <Notice tone="warn">
-                FlickSync is not reachable from the panel. Open the FlickSync page for details.
-              </Notice>
-            ))}
-          {m.id === "flickdd" &&
-            (d ? (
-              <div style={{ display: "flex", flexWrap: "wrap", gap: "0.5rem", alignItems: "center" }}>
-                <Pill tone="strong">Online</Pill>
-                {o && <Pill>v{o.version}</Pill>}
-                {(["jellyfin", "plex"] as const)
-                  .filter((b) => d.backends[b])
-                  .map((b) => (
-                    <Pill key={b}>{BACKEND_LABEL[b]}</Pill>
-                  ))}
-                <Pill>
-                  {formatCount(d.active)} / {formatCount(d.limits.max_global)} active
-                </Pill>
-                <Pill>
-                  {formatCount(d.totals.downloads)} {d.totals.downloads === 1 ? "download" : "downloads"}
-                </Pill>
-                <Pill>{formatBytes(d.totals.bytes_served)} served</Pill>
-              </div>
-            ) : ddOff ? (
-              <div style={{ display: "flex", flexWrap: "wrap", gap: "0.5rem", alignItems: "center" }}>
-                <Pill tone="warn">Disabled</Pill>
-                {o && <Pill>v{o.version}</Pill>}
-              </div>
-            ) : (
-              <Notice tone="warn">
-                FlickDD is not reachable from the panel. Open the FlickDD page for details.
-              </Notice>
-            ))}
-        </Panel>
-      ))}
+      <ModulesOverview extras={extras} />
     </div>
   );
 }

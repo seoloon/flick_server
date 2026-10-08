@@ -129,3 +129,7 @@ a.fk-btn { text-decoration: none; }
 .dtable td { padding: 0.5rem 0.75rem 0.5rem 0; border-top: 1px solid var(--hairline); font-variant-numeric: tabular-nums; max-width: 18rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .daybars { display: block; width: 100%; height: auto; }
 .daybars rect { fill: var(--foreground); }
+
+/* ---------- Modules ---------- */
+.pill-row { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem; }
+.muted { margin: 0; color: var(--muted-foreground); font-size: 0.875rem; line-height: 1.6; }

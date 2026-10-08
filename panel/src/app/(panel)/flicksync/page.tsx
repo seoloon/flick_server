@@ -1,4 +1,5 @@
-import { PageHeader } from "@/components/flick/ui";
+import { ModuleGate } from "@/components/ModuleGate";
+import { ButtonLink, PageHeader } from "@/components/flick/ui";
 
 import { RoomsPanel } from "./RoomsPanel";
 import { StatsPanel } from "./StatsPanel";
@@ -11,9 +12,16 @@ export default function FlickSyncPage() {
       <PageHeader
         title="FlickSync"
         lead="Watch Together. Keep an eye on live rooms and see how well everyone stays in sync."
+        actions={
+          <ButtonLink href="/settings/flicksync" icon="settings">
+            Settings
+          </ButtonLink>
+        }
       />
-      <RoomsPanel />
-      <StatsPanel />
+      <ModuleGate id="flicksync">
+        <RoomsPanel />
+        <StatsPanel />
+      </ModuleGate>
     </div>
   );
 }
