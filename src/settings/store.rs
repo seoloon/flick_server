@@ -42,7 +42,7 @@ fn schema_version() -> u32 {
     SCHEMA_VERSION
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Stored {
     #[serde(default = "schema_version")]
     pub version: u32,
@@ -70,6 +70,39 @@ impl Default for Stored {
             flickdd: Values::new(),
             extra: BTreeMap::new(),
         }
+    }
+}
+
+/// Values of secret (or unknown) settings, printed as `<redacted>`.
+struct RedactedValues<'a>(&'a Values);
+
+impl std::fmt::Debug for RedactedValues<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        use super::fields::{Kind, field};
+        f.debug_map()
+            .entries(self.0.iter().map(|(name, value)| {
+                let shown = match field(name) {
+                    Some(fd) if fd.kind != Kind::Secret => value.as_str(),
+                    _ => "<redacted>",
+                };
+                (name, shown)
+            }))
+            .finish()
+    }
+}
+
+/// Manual `Debug`: stored secrets must never reach logs. Unknown top-level keys are listed by
+/// name only.
+impl std::fmt::Debug for Stored {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Stored")
+            .field("version", &self.version)
+            .field("revision", &self.revision)
+            .field("server", &RedactedValues(&self.server))
+            .field("flicksync", &RedactedValues(&self.flicksync))
+            .field("flickdd", &RedactedValues(&self.flickdd))
+            .field("extra", &self.extra.keys().collect::<Vec<_>>())
+            .finish()
     }
 }
 
@@ -239,6 +272,27 @@ mod tests {
         save(&d, &Stored::default()).unwrap();
         let mode = std::fs::metadata(path_in(&d)).unwrap().permissions().mode();
         assert_eq!(mode & 0o777, 0o600);
+    }
+
+    #[test]
+    fn debug_never_prints_stored_secrets() {
+        let mut s = Stored::default();
+        s.server
+            .insert("FLICKSYNC_AUTH_KEYS".into(), "k:s:s3cr3t-key".into());
+        s.server
+            .insert("FLICKSYNC_LOG_LEVEL".into(), "debug".into());
+        s.flickdd
+            .insert("FLICKDD_PLEX_TOKEN".into(), "s3cr3t-plex".into());
+        s.flicksync
+            .insert("SOMETHING_UNKNOWN".into(), "s3cr3t-unknown".into());
+        s.extra
+            .insert("future".into(), serde_json::json!("s3cr3t-extra"));
+        let out = format!("{s:?}");
+        assert!(!out.contains("s3cr3t"), "{out}");
+        assert!(
+            out.contains("debug") && out.contains("FLICKDD_PLEX_TOKEN"),
+            "{out}"
+        );
     }
 
     #[test]

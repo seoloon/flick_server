@@ -175,11 +175,11 @@ impl AppState {
     }
 
     fn build_dd(&self) -> Result<Arc<DdState>, String> {
-        let cfg = self.settings.config().map_err(|e| e.to_string())?;
-        if !cfg.dd.enabled {
+        let cfg = self.settings.dd_config().map_err(|e| e.to_string())?;
+        if !cfg.enabled {
             return Err("FlickDD is not enabled".to_owned());
         }
-        Ok(DdState::new(cfg.dd))
+        Ok(DdState::new(cfg))
     }
 
     /// Start `id` with the settings in force. The caller holds the module's gate. A module that

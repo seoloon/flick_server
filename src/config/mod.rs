@@ -54,7 +54,7 @@ pub struct WsConfig {
     pub max_connections: usize,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct HttpConfig {
     /// Allowed browser origins (CORS and WebSocket `Origin`). Empty = browsers denied.
     pub allowed_origins: Vec<String>,
@@ -66,6 +66,27 @@ pub struct HttpConfig {
     pub max_body_bytes: usize,
 }
 
+/// `Some(_)` as `Some("<redacted>")`, so a `Debug` print tells whether a secret is set.
+fn redacted(secret: &Option<String>) -> Option<&'static str> {
+    secret.as_ref().map(|_| "<redacted>")
+}
+
+/// Manual `Debug`: the tokens and the panel password must never reach logs (`Config` derives
+/// `Debug`).
+impl std::fmt::Debug for HttpConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("HttpConfig")
+            .field("allowed_origins", &self.allowed_origins)
+            .field("metrics_enabled", &self.metrics_enabled)
+            .field("metrics_token", &redacted(&self.metrics_token))
+            .field("admin_token", &redacted(&self.admin_token))
+            .field("panel_password", &redacted(&self.panel_password))
+            .field("max_body_bytes", &self.max_body_bytes)
+            .finish()
+    }
+}
+
+/// Every secret inside is redacted by the `Debug` of `HttpConfig` and `AuthConfig`.
 #[derive(Debug, Clone)]
 pub struct Config {
     pub host: String,
@@ -86,8 +107,9 @@ pub struct Config {
     pub keys_configured: bool,
     /// Public address used in invitations (`FLICKSYNC_PUBLIC_URL`).
     pub public: Option<Endpoint>,
-    /// FlickDD streaming-download module (`FLICKDD_*`).
-    pub dd: crate::dd::config::DdConfig,
+    // FlickDD (`FLICKDD_*`) is deliberately not part of this: it is parsed only when FlickDD
+    // starts (`Settings::dd_config`), so a broken FlickDD value can never stop the process,
+    // the server runtime or FlickSync.
 }
 
 pub(crate) type Lookup<'a> = &'a dyn Fn(&str) -> Option<String>;
@@ -389,9 +411,6 @@ impl Config {
             data_dir: parse(env, "FLICKSYNC_DATA_DIR", "./data".to_owned())?,
             keys_configured,
             public,
-            // Only `FLICKDD_ENABLED` is read while FlickDD is off: a stray FLICKDD_* value can
-            // never keep FlickSync from starting.
-            dd: crate::dd::config::DdConfig::from_lookup(env)?,
         })
     }
 }
@@ -510,20 +529,31 @@ mod tests {
     }
 
     #[test]
-    fn flickdd_variables_only_matter_when_flickdd_is_enabled() {
+    fn flickdd_variables_never_affect_the_shared_configuration() {
         let broken = [
             ("FLICKDD_PLEX_URL", "http://plex:32400"),
             ("FLICKDD_MAX_PARALLEL", "0"),
             ("FLICKDD_CHUNK_MB", "nope"),
         ];
-        let c = cfg(&broken).unwrap();
-        assert!(!c.dd.enabled);
-        let mut off = broken.to_vec();
-        off.push(("FLICKDD_ENABLED", "false"));
-        assert!(cfg(&off).is_ok());
-        let mut on = broken.to_vec();
-        on.push(("FLICKDD_ENABLED", "true"));
-        assert!(cfg(&on).is_err());
+        for flag in ["false", "true", "perhaps"] {
+            let mut all = broken.to_vec();
+            all.push(("FLICKDD_ENABLED", flag));
+            assert!(cfg(&all).is_ok(), "FLICKDD_ENABLED={flag}");
+        }
+    }
+
+    #[test]
+    fn debug_never_prints_secrets() {
+        let c = cfg(&[
+            ("PANEL_PASSWORD", "s3cr3t-panel-password"),
+            ("FLICKSYNC_ADMIN_TOKEN", "s3cr3t-admin-token-0123"),
+            ("FLICKSYNC_METRICS_TOKEN", "s3cr3t-metrics-token"),
+            ("FLICKSYNC_AUTH_KEYS", "k1:srv:s3cr3t-signing-key"),
+        ])
+        .unwrap();
+        let out = format!("{c:?} {:?} {:?}", c.http, c.auth);
+        assert!(!out.contains("s3cr3t"), "{out}");
+        assert!(out.contains("<redacted>"), "{out}");
     }
 
     #[test]

@@ -273,6 +273,89 @@ async fn flickdd_can_be_configured_started_and_reloaded_from_the_api() {
 }
 
 #[tokio::test]
+async fn a_flickdd_enabled_without_backend_never_affects_the_rest() {
+    let s = server(&[]).await;
+    let (st, m) = call(&s, Method::POST, "/admin/v1/modules/flickdd/start", None).await;
+    assert_eq!(
+        (st, m["state"].as_str(), m["enabled"].as_bool()),
+        (StatusCode::OK, Some("failed"), Some(true)),
+        "{m}"
+    );
+
+    // (a) FlickSync still reloads.
+    let (st, m) = call(&s, Method::POST, "/admin/v1/modules/flicksync/reload", None).await;
+    assert_eq!(
+        (st, m["state"].as_str()),
+        (StatusCode::OK, Some("running")),
+        "{m}"
+    );
+
+    // (b) The other scopes still save, the server runtime still reloads.
+    let (st, v) = call(
+        &s,
+        Method::PUT,
+        "/admin/v1/settings/server",
+        Some(json!({"values": {"FLICKSYNC_PUBLIC_URL": "https://flick.example.com"}})),
+    )
+    .await;
+    assert_eq!(st, StatusCode::OK, "{v}");
+    let (st, v) = call(
+        &s,
+        Method::PUT,
+        "/admin/v1/settings/flicksync",
+        Some(json!({"values": {"FLICKSYNC_MAX_ROOM_SIZE": 7}})),
+    )
+    .await;
+    assert_eq!(st, StatusCode::OK, "{v}");
+    let (st, v) = call(&s, Method::POST, "/admin/v1/settings/server/reload", None).await;
+    assert_eq!(st, StatusCode::OK, "{v}");
+
+    // (c) A restart on the same data directory (the FlickDD switch comes from the file only)
+    // boots, FlickDD failed, FlickSync running.
+    let dir = s.state.settings.lookup("FLICKSYNC_DATA_DIR").unwrap();
+    let keys = s.state.settings.lookup("FLICKSYNC_AUTH_KEYS").unwrap();
+    let env_dir = dir.clone();
+    let env: flicksync::settings::Env = std::sync::Arc::new(move |k| match k {
+        "FLICKSYNC_DATA_DIR" => Some(env_dir.clone()),
+        "FLICKSYNC_AUTH_KEYS" => Some(keys.clone()),
+        "FLICKSYNC_ENABLED" => Some("true".to_owned()),
+        _ => None,
+    });
+    let settings = flicksync::settings::Settings::open(std::path::Path::new(&dir), env).unwrap();
+    let again = flicksync::app::AppState::new(settings).expect("boots despite FlickDD");
+    let dd = again.module_status(flicksync::modules::ModuleId::FlickDd);
+    assert_eq!((dd.state, dd.enabled), ("failed", true));
+    assert!(again.sync().is_ok(), "FlickSync is unaffected and runs");
+    again.stop_all();
+}
+
+#[tokio::test]
+async fn an_invalid_flickdd_environment_never_blocks_boot_or_other_scopes() {
+    let s = server(&[("FLICKDD_ENABLED", "true"), ("FLICKDD_MAX_PARALLEL", "ten")]).await;
+    let dd = s.state.module_status(flicksync::modules::ModuleId::FlickDd);
+    assert_eq!(dd.state, "failed");
+    assert!(dd.message.unwrap().contains("FLICKDD_MAX_PARALLEL"));
+    assert!(s.state.sync().is_ok());
+    let (st, v) = call(
+        &s,
+        Method::PUT,
+        "/admin/v1/settings/flicksync",
+        Some(json!({"values": {"FLICKSYNC_MAX_ROOM_SIZE": 7}})),
+    )
+    .await;
+    assert_eq!(st, StatusCode::OK, "{v}");
+    // A FlickDD save is still validated.
+    let (st, _) = call(
+        &s,
+        Method::PUT,
+        "/admin/v1/settings/flickdd",
+        Some(json!({"values": {"FLICKDD_MAX_GLOBAL": 50}})),
+    )
+    .await;
+    assert_eq!(st, StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
 async fn the_server_scope_reloads_through_the_api() {
     let s = server(&[]).await;
     let (st, _) = call(

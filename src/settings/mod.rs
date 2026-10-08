@@ -120,9 +120,16 @@ impl Settings {
         self.lookup_in(&self.read(), name)
     }
 
-    /// The whole configuration as seen through the stored settings.
+    /// The shared configuration (server and FlickSync) as seen through the stored settings.
+    /// FlickDD is not part of it: see [`Settings::dd_config`].
     pub fn config(&self) -> Result<Config, ConfigError> {
         Config::from_lookup(&|k| self.lookup(k))
+    }
+
+    /// FlickDD's configuration, parsed and validated on its own so that an invalid or
+    /// incomplete FlickDD setting only ever fails FlickDD.
+    pub fn dd_config(&self) -> Result<DdConfig, ConfigError> {
+        DdConfig::from_lookup(&|k| self.lookup(k))
     }
 
     pub fn revision(&self) -> u64 {
@@ -249,18 +256,23 @@ impl Settings {
         Ok(self.view_of(&guard, scope))
     }
 
+    /// Validate `scope` as it would be after the change. Server and FlickSync settings share one
+    /// configuration and are checked together; FlickDD settings are independent of it, so
+    /// neither side can block the other's saves.
     fn validate(&self, next: &Stored, scope: Scope) -> Result<(), SettingsError> {
         let look = |k: &str| self.lookup_in(next, k);
         let invalid = |e: &dyn std::fmt::Display| SettingsError::Invalid(e.to_string());
-        let cfg = Config::from_lookup(&look).map_err(|e| invalid(&e))?;
         match scope {
             Scope::Server => {
+                let cfg = Config::from_lookup(&look).map_err(|e| invalid(&e))?;
                 Authenticator::new(&cfg.auth)
                     .map_err(|e| SettingsError::Invalid(format!("FLICKSYNC_AUTH_KEYS: {e}")))?;
                 EnvFilter::try_new(&cfg.log_level)
                     .map_err(|e| SettingsError::Invalid(format!("FLICKSYNC_LOG_LEVEL: {e}")))?;
             }
-            Scope::FlickSync => {}
+            Scope::FlickSync => {
+                Config::from_lookup(&look).map_err(|e| invalid(&e))?;
+            }
             Scope::FlickDd => {
                 let enabled = parse_bool(&look, "FLICKDD_ENABLED", false).unwrap_or(false);
                 DdConfig::check(&look, enabled).map_err(|e| invalid(&e))?;

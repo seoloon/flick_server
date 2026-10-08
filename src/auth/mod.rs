@@ -95,7 +95,7 @@ pub enum AuthConfigError {
     DuplicateKid(String),
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct AuthConfig {
     /// `kid:server_id:secret` entries.
     pub keys: Vec<String>,
@@ -103,6 +103,18 @@ pub struct AuthConfig {
     /// Tokens whose `exp` is further than this in the future are refused.
     pub max_token_ttl_secs: u64,
     pub leeway_secs: u64,
+}
+
+/// Manual `Debug`: the signing secrets must never reach logs; only the key count is shown.
+impl std::fmt::Debug for AuthConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("AuthConfig")
+            .field("keys", &format_args!("<{} redacted>", self.keys.len()))
+            .field("audience", &self.audience)
+            .field("max_token_ttl_secs", &self.max_token_ttl_secs)
+            .field("leeway_secs", &self.leeway_secs)
+            .finish()
+    }
 }
 
 impl Default for AuthConfig {
