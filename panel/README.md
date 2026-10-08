@@ -3,7 +3,18 @@
 The web panel for Flick Server: one sidebar entry per component, **FlickSync** first. Next.js (App Router),
 no database, no extra runtime dependency, styled with the Flick design system (tokens, glass, pills, Inter).
 
-FlickDD page (once FlickDD is enabled on the server, see `FLICKDD_*` in `.env.example`): downloads in progress with a stop button, recent downloads, bytes per day, top titles and the limits in force.
+Overview: the server's state, the invitation link, and one card per module (FlickSync, FlickDD) with its state
+(running, stopped, or failed to start with the reason), a "Reload required" badge when saved settings are not yet in
+force, and Start / Stop / Reload. Stop and Reload ask first: they close rooms or cut downloads. A module stays as you
+leave it, also after a server restart.
+
+Settings (sidebar, or the Settings button of a module): one page per scope (Server, FlickSync, FlickDD), built from the
+list of settings the server returns. Each setting shows where its value comes from (saved in the panel, the
+environment, or the default); a value saved here wins over the environment and Reset removes it. Secrets are never
+shown: replace or clear them. Save sends only what changed, shows the server's explanation when a value is refused,
+then offers to apply the server settings or reload the module.
+
+FlickDD page (once FlickDD runs with a Jellyfin or Plex backend set in its settings): downloads in progress with a stop button, recent downloads, bytes per day, top titles and the limits in force.
 
 FlickSync page: copy the invitation link (masked until revealed, QR code on demand), list live rooms and close frozen
 ones, see rooms, participants, latency, traffic, sync corrections and the distribution of measured drift.
@@ -67,8 +78,9 @@ Development: `npm run dev` (port 3000). Checks: `npm run typecheck`, `npm test`.
 * Sign-in: constant-time password check, 5 failures per client and 15 minutes, then a lockout.
 * Session: a signed, `HttpOnly`, `SameSite=Strict` cookie valid for 12 hours, with no server-side store. The key
   is derived from the password, so changing the password signs everyone out.
-* The admin token never reaches the browser. The browser calls the panel's own `/api/flicksync/*` routes, which need
-  the session; those call FlickSync server-side. Closing a room also checks that the request is same-origin.
+* The admin token and secret settings never reach the browser. The browser calls the panel's own `/api/*` routes,
+  which need the session; those call the server's admin API. Every change (closing a room, cutting a download,
+  starting or stopping a module, saving or applying settings) also checks that the request is same-origin.
 * Strict CSP, `frame-ancestors 'none'`, no caching of pages or API responses.
 
 ## Adding a component
@@ -76,7 +88,9 @@ Development: `npm run dev` (port 3000). Checks: `npm run typecheck`, `npm test`.
 The panel is a base for the other Flick Server components. To add one:
 
 1. Create `src/app/(panel)/<id>/page.tsx` (the layout already requires a session).
-2. Add an entry to `src/lib/modules.ts`; the sidebar and Overview pick it up.
+2. Add an entry to `src/lib/modules.ts` (with its `settingsHref`); the sidebar, the Overview card and the settings
+   tabs pick it up. The server must know the module id and its settings scope (see `docs/admin-api.md`); add the id
+   to `MODULE_IDS` in `src/lib/module-status.ts` and the scope to `SETTINGS_SCOPES` in `src/lib/settings-form.ts`.
 3. Build the page from `src/components/flick/ui.tsx` (Button, Panel, Pill, Notice, Facts, Dialog, Segmented, ...).
    Follow the design system's content rules: Title Case for navigation and buttons, sentence case elsewhere,
    British spelling, no emoji, no exclamation marks, show only what the data says.
