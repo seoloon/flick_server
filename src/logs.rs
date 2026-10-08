@@ -89,24 +89,75 @@ fn is_name_char(c: char) -> bool {
     c.is_ascii_alphanumeric() || matches!(c, '_' | '-' | '.')
 }
 
-/// Where a secret value starting at byte `start` ends: a quoted value at its closing quote
-/// (included), otherwise at the first separator.
+/// Characters that end an unquoted secret value.
+fn is_separator(c: char) -> bool {
+    c.is_whitespace() || matches!(c, '&' | '"' | '\'' | ',' | ';' | ')' | ']' | '}')
+}
+
+/// Where a secret value starting at byte `start` ends. A quoted value ends after its closing
+/// quote: `"..."` (a quote preceded by a backslash does not close it), `'...'`, or the escaped
+/// form `\"..."` that `{:?}` produces inside another quoted string. Otherwise it ends at the
+/// first separator. An unterminated quote runs to the end of the text.
 fn value_end(text: &str, start: usize) -> usize {
     let rest = &text[start..];
+    if let Some(inner) = rest.strip_prefix("\\\"") {
+        return inner.find("\\\"").map_or(text.len(), |p| start + 2 + p + 2);
+    }
     match rest.chars().next() {
-        Some(q @ ('"' | '\'')) => rest[1..].find(q).map_or(text.len(), |p| start + 1 + p + 1),
-        _ => rest
-            .find(|c: char| {
-                c.is_whitespace() || matches!(c, '&' | '"' | '\'' | ',' | ';' | ')' | ']' | '}')
-            })
-            .map_or(text.len(), |p| start + p),
+        Some(q @ ('"' | '\'')) => {
+            let bytes = rest.as_bytes();
+            let mut i = 1;
+            while i < bytes.len() {
+                if bytes[i] == b'\\' {
+                    i += 2;
+                } else if bytes[i] == q as u8 {
+                    return start + i + 1;
+                } else {
+                    i += 1;
+                }
+            }
+            text.len()
+        }
+        _ => rest.find(is_separator).map_or(text.len(), |p| start + p),
     }
 }
 
-/// `text` with the value after `Bearer ` and the value of every `name=value` whose name is a
-/// secret name replaced by [`REDACTED`]. Borrowed when nothing changes.
+const BEARER: &str = "bearer";
+
+/// If `lower` has `bearer` plus whitespace at byte `pos`, where the token after it starts.
+fn bearer_value_start(lower: &str, pos: usize) -> Option<usize> {
+    let bytes = lower.as_bytes();
+    if !lower[pos..].starts_with(BEARER) {
+        return None;
+    }
+    let mut at = pos + BEARER.len();
+    if !bytes.get(at).is_some_and(u8::is_ascii_whitespace) {
+        return None;
+    }
+    while bytes.get(at).is_some_and(u8::is_ascii_whitespace) {
+        at += 1;
+    }
+    Some(at)
+}
+
+/// Position of the first `Bearer <token>` at or after `from`, with where its token starts.
+fn find_bearer(lower: &str, from: usize) -> Option<(usize, usize)> {
+    let mut at = from;
+    while let Some(p) = lower[at..].find(BEARER) {
+        let pos = at + p;
+        if let Some(value) = bearer_value_start(lower, pos) {
+            return Some((pos, value));
+        }
+        at = pos + BEARER.len();
+    }
+    None
+}
+
+/// `text` with the token after `Bearer` and the value of every `name=value` whose name is a
+/// secret name (spaces around `=` allowed) replaced by [`REDACTED`]. A value that is itself
+/// `Bearer <token>` is redacted through the token. Borrowed when nothing changes. Linear in
+/// the length of `text`.
 pub fn scrub(text: &str) -> Cow<'_, str> {
-    const BEARER: &str = "bearer ";
     let has_bearer = text
         .as_bytes()
         .windows(BEARER.len())
@@ -116,30 +167,61 @@ pub fn scrub(text: &str) -> Cow<'_, str> {
     }
     // ASCII lowercasing keeps every byte offset, so indices found in `lower` are valid in `text`.
     let lower = text.to_ascii_lowercase();
+    let bytes = text.as_bytes();
     let mut out = String::with_capacity(text.len());
     let mut copied = 0;
     let mut from = 0;
+    // Next `=` and next `Bearer`, found once and looked up again only when `from` passes them.
+    let mut next_eq: Option<Option<usize>> = None;
+    let mut next_bearer: Option<Option<(usize, usize)>> = None;
     while from < text.len() {
-        let eq = lower[from..].find('=').map(|p| from + p);
-        let bearer = lower[from..].find(BEARER).map(|p| from + p);
+        let eq = match next_eq {
+            Some(None) => None,
+            Some(Some(e)) if e >= from => Some(e),
+            _ => {
+                let e = lower[from..].find('=').map(|p| from + p);
+                next_eq = Some(e);
+                e
+            }
+        };
+        let bearer = match next_bearer {
+            Some(None) => None,
+            Some(Some((p, v))) if p >= from => Some((p, v)),
+            _ => {
+                let b = find_bearer(&lower, from);
+                next_bearer = Some(b);
+                b
+            }
+        };
         let value_start = match (eq, bearer) {
             (None, None) => break,
-            (Some(e), Some(b)) if b < e => b + BEARER.len(),
-            (None, Some(b)) => b + BEARER.len(),
+            (Some(e), Some((p, v))) if p < e => v,
+            (None, Some((_, v))) => v,
             (Some(e), _) => {
-                let name_start = text[..e]
+                let mut name_end = e;
+                while name_end > 0 && matches!(bytes[name_end - 1], b' ' | b'\t') {
+                    name_end -= 1;
+                }
+                let name_start = text[..name_end]
                     .char_indices()
                     .rev()
                     .find(|&(_, c)| !is_name_char(c))
                     .map_or(0, |(i, c)| i + c.len_utf8());
-                if name_start == e || !is_secret_name(&text[name_start..e]) {
+                if name_start == name_end || !is_secret_name(&text[name_start..name_end]) {
                     from = e + 1;
                     continue;
                 }
-                e + 1
+                let mut v = e + 1;
+                while matches!(bytes.get(v), Some(b' ' | b'\t')) {
+                    v += 1;
+                }
+                bearer_value_start(&lower, v).unwrap_or(v)
             }
         };
-        if text[value_start..].starts_with(REDACTED) {
+        let rest = &text[value_start..];
+        if let Some(after) = rest.strip_prefix(REDACTED)
+            && after.chars().next().is_none_or(is_separator)
+        {
             from = value_start + REDACTED.len();
             continue;
         }
@@ -158,10 +240,15 @@ pub fn scrub(text: &str) -> Cow<'_, str> {
     Cow::Owned(out)
 }
 
-/// `s` cut to at most `max` bytes on a character boundary, with `…` appended when cut.
-fn truncated(s: Cow<'_, str>, max: usize) -> String {
+/// `s` cut to at most `max` bytes on a character boundary, with `…` appended when cut
+/// (or when `was_cut`: the caller already dropped a tail).
+fn truncated(s: Cow<'_, str>, max: usize, was_cut: bool) -> String {
     if s.len() <= max {
-        return s.into_owned();
+        let mut out = s.into_owned();
+        if was_cut {
+            out.push('…');
+        }
+        return out;
     }
     let mut cut = max;
     while !s.is_char_boundary(cut) {
@@ -173,9 +260,19 @@ fn truncated(s: Cow<'_, str>, max: usize) -> String {
     out
 }
 
-/// What the buffer stores for a message or a fields text: scrubbed first, then capped.
+/// What the buffer stores for a message or a fields text: scrubbed first, then capped. Only the
+/// head of a huge text is scrubbed (the rest is dropped anyway), so the cost is bounded; a
+/// secret straddling that head's end is redacted to its end.
 pub fn clean(text: &str, max: usize) -> String {
-    truncated(scrub(text), max)
+    let limit = max.saturating_mul(4).max(256);
+    if text.len() <= limit {
+        return truncated(scrub(text), max, false);
+    }
+    let mut cut = limit;
+    while !text.is_char_boundary(cut) {
+        cut -= 1;
+    }
+    truncated(scrub(&text[..cut]), max, true)
 }
 
 fn now_ms() -> u64 {
@@ -257,9 +354,9 @@ impl LogBuffer {
             let mut ring = self.ring.lock().unwrap_or_else(PoisonError::into_inner);
             let seq = ring.next_seq;
             ring.next_seq += 1;
-            if let Some(e) = Arc::get_mut(&mut entry) {
-                e.seq = seq;
-            }
+            Arc::get_mut(&mut entry)
+                .expect("the entry is not shared yet")
+                .seq = seq;
             let evicted = if ring.entries.len() >= self.capacity {
                 ring.entries.pop_front()
             } else {
@@ -281,11 +378,12 @@ impl LogBuffer {
         let start = usize::try_from(q.after.saturating_add(1).saturating_sub(first))
             .unwrap_or(usize::MAX)
             .min(ring.entries.len());
+        let limit = q.limit.max(1);
         let mut entries = Vec::new();
         let mut next = q.after;
         let mut more = false;
         for e in ring.entries.range(start..) {
-            if entries.len() == q.limit {
+            if entries.len() >= limit {
                 more = true;
                 break;
             }
@@ -347,7 +445,10 @@ impl LogQuery {
             let shown = crate::settings::shorten(value);
             match name {
                 "after" => {
-                    q.after = value.trim().parse().map_err(|_| {
+                    q.after = Some(value.as_str())
+                        .filter(|v| !v.is_empty() && v.bytes().all(|b| b.is_ascii_digit()))
+                        .and_then(|v| v.parse().ok())
+                        .ok_or_else(|| {
                         format!(
                             "after must be a whole number: the seq of the last line you have, or 0 for the oldest line kept; got '{shown}'."
                         )
@@ -469,7 +570,8 @@ mod tests {
             scrub("password=<redacted> user=\"alice\""),
             "password=<redacted> user=\"alice\""
         );
-        assert_eq!(scrub("token= trailing token="), "token= trailing token=");
+        assert_eq!(scrub("token= trailing token="), "token= <redacted> token=");
+        assert_eq!(scrub("token=&x=1"), "token=&x=1");
         assert_eq!(scrub("é token=sécret é"), "é token=<redacted> é");
         assert!(matches!(scrub("room created"), Cow::Borrowed(_)));
         assert!(matches!(scrub("room_id=R1 streams=3"), Cow::Borrowed(_)));
@@ -487,6 +589,61 @@ mod tests {
         assert_eq!(clean(&odd, 4), "aé…");
         // Scrubbing happens before the cut, so a secret cannot survive half-cut.
         assert_eq!(clean("token=abcdefgh", 9), "token=<re…");
+    }
+
+    #[test]
+    fn bearer_values_and_debug_escaped_quotes_do_not_leak() {
+        assert_eq!(
+            scrub("authorization=Bearer eyJsecret.abc next"),
+            "authorization=Bearer <redacted> next"
+        );
+        assert_eq!(
+            scrub("access_token=Bearer x&y=1"),
+            "access_token=Bearer <redacted>&y=1"
+        );
+        assert_eq!(scrub("Bearer\tabc  d"), "Bearer\t<redacted>  d");
+        assert_eq!(scrub("Bearer   abc"), "Bearer   <redacted>");
+        assert_eq!(scrub("token = x y"), "token = <redacted> y");
+        assert_eq!(scrub("token=<redacted>SECRET"), "token=<redacted>");
+        let nested = format!("error={:?}", "call failed: token=\"s3cr3t value\" ok");
+        let out = scrub(&nested);
+        assert!(!out.contains("s3cr3t") && !out.contains("value"), "{out}");
+        assert!(out.contains("ok"), "{out}");
+        let quoted = format!("password={:?} next", "ab\"cd ef");
+        assert_eq!(scrub(&quoted), "password=<redacted> next");
+    }
+
+    #[test]
+    fn scrubbing_is_linear_on_adversarial_input() {
+        let started = std::time::Instant::now();
+        let eqs = "a=".repeat(512 * 1024);
+        assert!(matches!(scrub(&eqs), Cow::Borrowed(_)));
+        let bearers = "a=bearer ".repeat(100_000);
+        let _ = scrub(&bearers);
+        let nested = "token=\"x ".repeat(100_000);
+        let _ = scrub(&nested);
+        assert!(clean(&eqs, MAX_MESSAGE_BYTES).len() <= MAX_MESSAGE_BYTES + 3);
+        assert!(started.elapsed() < std::time::Duration::from_secs(3));
+    }
+
+    #[test]
+    fn a_cut_head_still_ends_with_an_ellipsis() {
+        let huge = format!("{} token={}", "x".repeat(300), "y".repeat(50_000));
+        let cut = clean(&huge, 100);
+        assert!(cut.ends_with('…') && cut.len() <= 100 + 3, "{cut}");
+        assert!(!cut.contains('y'));
+    }
+
+    #[test]
+    fn limit_zero_still_makes_progress() {
+        let b = LogBuffer::new(3);
+        b.push(Level::Info, "t", "m", "");
+        b.push(Level::Info, "t", "n", "");
+        let page = b.query(&LogQuery {
+            limit: 0,
+            ..LogQuery::default()
+        });
+        assert_eq!((seqs(&page), page.next, page.more), (vec![1], 1, true));
     }
 
     fn pairs(list: &[(&str, &str)]) -> Vec<(String, String)> {
@@ -697,6 +854,9 @@ mod tests {
         for (list, needle) in [
             (vec![("after", "abc")], "after must be a whole number"),
             (vec![("after", "-1")], "after must be a whole number"),
+            (vec![("after", "+1")], "after must be a whole number"),
+            (vec![("after", " 1")], "after must be a whole number"),
+            (vec![("after", "")], "after must be a whole number"),
             (
                 vec![("level", "loud")],
                 "level must be one of error, warn, info, debug, trace",
