@@ -129,6 +129,8 @@ changed since the module started. Every status object (here and in the answers b
 No body. Answer `200`: the module's status object as above. `start` persists `enabled=true` first, `stop` persists
 `enabled=false`; both are idempotent. `reload` restarts with the stored settings and leaves a disabled module stopped.
 Invalid stored settings are not an HTTP error: the answer is `200` with `state: "failed"` and the reason in `message`.
+A module that fails this way (FlickDD enabled without a backend, for instance) never affects the other module, the
+server scope or the next boot. Stopping or reloading FlickDD resets its stats and history.
 Errors: `404` for an unknown module id or action, `500 INTERNAL` when the settings file cannot be written, `401`
 without the token.
 
@@ -192,7 +194,8 @@ so the panel can tell "off" from "no data". Download tokens are never part of an
 ```
 
 `totals.downloads` counts finished downloads whatever their outcome; `rejected` is the number of creations or
-requests refused for a limit (see `rejected` in `dd/stats`). All totals are counters since startup.
+requests refused for a limit (see `rejected` in `dd/stats`). All totals are counters since FlickDD last started:
+stats and history (`dd/stats`, `dd/history`) are reset on every stop or reload of the module.
 
 ### `GET /admin/v1/dd/active`
 

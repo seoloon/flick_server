@@ -75,7 +75,8 @@ Redis, nothing to maintain**. A small VPS or a Raspberry Pi is plenty.
   reference to the title. (If you turn on FlickDD, downloaded files do travel
   through the server on their way from your Jellyfin or Plex.)
 - **Nothing is stored.** Rooms live in memory and vanish on restart. The only
-  file written is the signing key.
+  files written are the signing key and the settings you change from the panel
+  (`settings.json`).
 - **Short-lived signed tokens.** Access is checked on every request.
 - **Panel locked behind a password**, and off unless you enable it.
 
@@ -85,6 +86,7 @@ You need Docker and a domain name pointing to your server.
 
 ```sh
 cp .env.example .env                 # set FLICKSYNC_PUBLIC_URL=https://your.domain
+echo "FLICKSYNC_ENABLED=true" >> .env  # FlickSync is off by default
 docker compose up -d --build
 docker compose exec flick-modules flicksync invite
 ```

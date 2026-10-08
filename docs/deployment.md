@@ -10,6 +10,7 @@ reconnect, and get `ROOM_NOT_FOUND`).
 git clone <repo> flicksync && cd flicksync
 cp .env.example .env
 # edit .env: set FLICKSYNC_PUBLIC_URL=https://sync.example.com (your public address)
+#            and FLICKSYNC_ENABLED=true (FlickSync is off by default)
 docker compose up -d --build
 curl http://localhost:8787/health        # {"status":"ok",...}
 docker compose exec flick-modules flicksync invite   # prints the invitation link for Flick
@@ -34,7 +35,8 @@ corrupt; it never regenerates a key silently. Set `FLICKSYNC_PUBLIC_URL` so invi
 
 ### Web panel
 
-`ENABLE_WEB_PANEL=true` in `.env`, plus `PANEL_PASSWORD` and `FLICKSYNC_ADMIN_TOKEN`, starts the `panel` service on
+`ENABLE_WEB_PANEL=true` in `.env`, plus `PANEL_PASSWORD` and `FLICKSYNC_ADMIN_TOKEN` (still needed by the current
+panel), starts the `panel` service on
 port 3000 (see [../panel/README.md](../panel/README.md)); without it the service exits immediately and nothing is
 published. Put the panel behind your TLS reverse proxy like FlickSync, and forward `X-Forwarded-Proto` and
 `X-Forwarded-For`. Use `docker compose up -d flick-modules` to run FlickSync alone and skip building the panel.
@@ -195,8 +197,15 @@ sync.example.com {
 * Settings are stored in `/data/settings.json` (the volume already mounted). Stored values beat the environment.
 * Modules are **off by default**. To keep an existing install running, set `FLICKSYNC_ENABLED=true` (and keep
   `FLICKDD_ENABLED=true` if used) once, or enable the modules from the panel.
-* `FLICKSYNC_ADMIN_TOKEN` is replaced by `PANEL_PASSWORD` (the token is derived from it, see
-  [admin-api.md](admin-api.md)).
+* FlickSync now derives its admin token from `PANEL_PASSWORD` (see [admin-api.md](admin-api.md)) and treats
+  `FLICKSYNC_ADMIN_TOKEN` as deprecated. **Keep `FLICKSYNC_ADMIN_TOKEN` set while you run the panel**: the current
+  panel still sends it, until the panel is updated.
+* CORS is always active now, even with `FLICKSYNC_CORS_ORIGINS` empty. A preflight (`OPTIONS`) from an origin that is
+  not listed answers `200` without `Access-Control-Allow-Origin` (the browser then blocks the request) instead of
+  `405`; responses carry `Vary: origin, access-control-request-method, access-control-request-headers`; origins are
+  matched case-insensitively. Native clients send no `Origin` and are unaffected.
+* FlickDD statistics and download history live in the running module: every stop or reload of FlickDD (panel,
+  admin API or restart) starts them from zero.
 * `/ready` reports whether the signing keys are loaded; it no longer turns `503` during graceful shutdown. An invalid
   `FLICKSYNC_AUTH_KEYS` now exits with code 2 instead of 1.
 * Do not expose `/admin` through the reverse proxy.
