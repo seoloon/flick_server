@@ -236,3 +236,36 @@ export interface SettingsView {
   revision: number;
   fields: SettingField[];
 }
+
+// Logs (/admin/v1/logs).
+
+export type LogLevel = "error" | "warn" | "info" | "debug" | "trace";
+
+export interface LogEntry {
+  /** From 1, +1 per line within one server run. */
+  seq: number;
+  /** ms since the epoch. */
+  ts: number;
+  level: LogLevel;
+  /** Module path, e.g. flicksync::api::admin. */
+  target: string;
+  message: string;
+  /** Other fields as `name=value`, separated by spaces; "" when none. */
+  fields: string;
+}
+
+export interface LogsResponse {
+  /** Start of the server run (ms); a change means the server restarted. */
+  boot: number;
+  /** Lines the server keeps; 0 when its log buffer is off. */
+  capacity: number;
+  /** FLICKSYNC_LOG_LEVEL in force. */
+  log_level: string;
+  entries: LogEntry[];
+  /** The `after` of the next request. */
+  next: number;
+  /** More lines are waiting: ask again at once. */
+  more: boolean;
+  /** Lines after the cursor already gone from the server's buffer. */
+  dropped: number;
+}
