@@ -86,12 +86,14 @@ export function mergeLogs(
   for (const entry of res.entries) {
     if (entry.seq > view.cursor) added.push({ kind: "entry", key: `${res.boot}:${entry.seq}`, entry });
   }
+  const cursor = Math.max(view.cursor, res.next);
+  if (added.length === 0) {
+    // Nothing to show: keep the lines array, so React and the auto-scroll see no change.
+    if (cursor === view.cursor && res.boot === view.boot) return { view, again: res.more };
+    return { view: { ...view, boot: res.boot, cursor }, again: res.more };
+  }
   return {
-    view: {
-      boot: res.boot,
-      cursor: Math.max(view.cursor, res.next),
-      ...capped(view, [...view.lines, ...added], maxLines),
-    },
+    view: { boot: res.boot, cursor, ...capped(view, [...view.lines, ...added], maxLines) },
     again: res.more,
   };
 }

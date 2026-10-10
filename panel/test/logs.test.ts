@@ -200,3 +200,15 @@ test("the panel route forwards only known, well-formed parameters", () => {
   }
   assert.equal(logsPath(41), "/api/logs?after=41&limit=1000");
 });
+
+test("an answer with nothing new keeps the same lines array", () => {
+  const v = mergeLogs(emptyView(), answer({ entries: [entry(1)], next: 1 })).view;
+  const r = mergeLogs(v, answer({ next: 1 }));
+  assert.equal(r.view.lines, v.lines);
+  assert.equal(r.view, v);
+  const stale = mergeLogs(v, answer({ entries: [entry(1)], next: 1 }));
+  assert.equal(stale.view.lines, v.lines, "already-seen entries add nothing");
+  const moved = mergeLogs(v, answer({ next: 5 }));
+  assert.equal(moved.view.lines, v.lines);
+  assert.equal(moved.view.cursor, 5);
+});

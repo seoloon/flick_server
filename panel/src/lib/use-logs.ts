@@ -60,7 +60,11 @@ export function useLogs(intervalMs = POLL_MS): LogsState {
             const data = body as LogsResponse;
             const merged = mergeLogs(viewRef.current, data);
             apply(merged.view);
-            setMeta({ capacity: data.capacity, logLevel: data.log_level });
+            setMeta((m) =>
+              m && m.capacity === data.capacity && m.logLevel === data.log_level
+                ? m
+                : { capacity: data.capacity, logLevel: data.log_level },
+            );
             setErrorText(null);
             again = merged.again;
           } catch {
