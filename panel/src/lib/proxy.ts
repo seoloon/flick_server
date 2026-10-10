@@ -14,6 +14,7 @@ export const signedOut = () => error(401, "SIGNED_OUT");
 export const forbidden = () => error(403, "FORBIDDEN");
 export const routeNotFound = () => error(404, "NOT_FOUND");
 export const invalid = (message: string) => error(400, "INVALID_PAYLOAD", message);
+export const invalidQuery = (message: string) => error(400, "INVALID_QUERY", message);
 
 /** Pass the server's answer on as is: its error messages explain the problem. */
 export function relay(res: UpstreamResult) {
