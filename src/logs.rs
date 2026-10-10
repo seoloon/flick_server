@@ -7,8 +7,12 @@
 
 use std::borrow::Cow;
 use std::collections::VecDeque;
+use std::fmt::{self, Write as _};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::{SystemTime, UNIX_EPOCH};
+
+use tracing::field::{Field, Visit};
+use tracing_subscriber::layer::{Context, Layer};
 
 /// Entries kept when `FLICKSYNC_LOG_BUFFER` is unset.
 pub const DEFAULT_CAPACITY: usize = 2000;
@@ -491,6 +495,76 @@ pub struct LogPage {
     pub dropped: u64,
 }
 
+/// The `tracing` layer that feeds a [`LogBuffer`]. Installed after the level filter, it records
+/// exactly the events the filter lets through. Spans are not recorded.
+pub struct LogCapture {
+    buffer: Arc<LogBuffer>,
+}
+
+impl LogCapture {
+    pub fn new(buffer: Arc<LogBuffer>) -> Self {
+        Self { buffer }
+    }
+}
+
+impl<S: tracing::Subscriber> Layer<S> for LogCapture {
+    fn on_event(&self, event: &tracing::Event<'_>, _ctx: Context<'_, S>) {
+        let meta = event.metadata();
+        let mut text = EventText::default();
+        event.record(&mut text);
+        self.buffer.push(
+            Level::from_tracing(meta.level()),
+            meta.target(),
+            &text.message,
+            &text.fields,
+        );
+    }
+}
+
+/// The message and the other fields of one event, as text.
+#[derive(Default)]
+struct EventText {
+    message: String,
+    fields: String,
+}
+
+impl EventText {
+    fn field(&mut self, name: &str, value: fmt::Arguments<'_>) {
+        // Added by the `log` bridge; the console layer drops them too.
+        if name.starts_with("log.") {
+            return;
+        }
+        if !self.fields.is_empty() {
+            self.fields.push(' ');
+        }
+        self.fields.push_str(name);
+        self.fields.push('=');
+        if is_secret_name(name) {
+            self.fields.push_str(REDACTED);
+        } else {
+            let _ = self.fields.write_fmt(value);
+        }
+    }
+}
+
+impl Visit for EventText {
+    fn record_str(&mut self, field: &Field, value: &str) {
+        if field.name() == "message" {
+            self.message.push_str(value);
+        } else {
+            self.field(field.name(), format_args!("{value:?}"));
+        }
+    }
+
+    fn record_debug(&mut self, field: &Field, value: &dyn fmt::Debug) {
+        if field.name() == "message" {
+            let _ = write!(self.message, "{value:?}");
+        } else {
+            self.field(field.name(), format_args!("{value:?}"));
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -885,5 +959,63 @@ mod tests {
         let long = "x".repeat(500);
         let err = LogQuery::from_pairs(&pairs(&[("level", long.as_str())])).unwrap_err();
         assert!(err.len() < 200, "the value is shortened: {err}");
+    }
+
+    type Handle = tracing_subscriber::reload::Handle<
+        tracing_subscriber::EnvFilter,
+        tracing_subscriber::Registry,
+    >;
+
+    /// Run `emit` under the same layering as `main.rs` (reloadable filter, then the capture) and
+    /// return what the buffer recorded.
+    fn captured(filter: &str, emit: impl FnOnce(&Handle)) -> Vec<Arc<LogEntry>> {
+        use tracing_subscriber::layer::SubscriberExt;
+        let buffer = Arc::new(LogBuffer::new(100));
+        let (filter, handle) =
+            tracing_subscriber::reload::Layer::new(tracing_subscriber::EnvFilter::new(filter));
+        let subscriber = tracing_subscriber::registry()
+            .with(filter)
+            .with(Some(LogCapture::new(buffer.clone())));
+        tracing::subscriber::with_default(subscriber, || emit(&handle));
+        buffer.query(&LogQuery::default()).entries
+    }
+
+    #[test]
+    fn the_capture_follows_the_active_filter_and_its_reloads() {
+        let entries = captured("info", |handle| {
+            tracing::debug!("hidden");
+            tracing::info!(room_id = "R1", streams = 3, "shown");
+            handle
+                .reload(tracing_subscriber::EnvFilter::new("debug"))
+                .unwrap();
+            tracing::debug!("now shown");
+        });
+        let messages: Vec<&str> = entries.iter().map(|e| e.message.as_str()).collect();
+        assert_eq!(messages, ["shown", "now shown"]);
+        assert_eq!(entries[0].level, Level::Info);
+        assert_eq!(entries[0].target, "flicksync::logs::tests");
+        assert_eq!(entries[0].fields, "room_id=\"R1\" streams=3");
+        assert_eq!(entries[1].level, Level::Debug);
+    }
+
+    #[test]
+    fn secret_fields_and_values_never_reach_the_buffer() {
+        let entries = captured("trace", |_| {
+            tracing::warn!(
+                password = "hunter2",
+                api_key = %"k-123",
+                user = "alice",
+                "login with Bearer abc.def and ?access_token=xyz&x=1"
+            );
+        });
+        let e = &entries[0];
+        assert_eq!(
+            e.fields,
+            "password=<redacted> api_key=<redacted> user=\"alice\""
+        );
+        assert_eq!(
+            e.message,
+            "login with Bearer <redacted> and ?access_token=<redacted>&x=1"
+        );
     }
 }

@@ -17,6 +17,7 @@ use crate::config::{Config, ConfigError, WsConfig};
 use crate::dd::DdState;
 use crate::errors::{Error, ErrorCode};
 use crate::invite::{self, InviteError};
+use crate::logs::LogBuffer;
 use crate::metrics::Metrics;
 use crate::modules::{ModuleId, Running, Slot, SlotState};
 use crate::room::RoomManager;
@@ -126,6 +127,8 @@ pub struct AppState {
     sync_slot: Arc<Slot<SyncRuntime>>,
     dd_slot: Arc<Slot<DdState>>,
     pub metrics: Arc<Metrics>,
+    /// The latest log lines, for `GET /admin/v1/logs`. Fed by `LogCapture` (installed in `main`).
+    pub logs: Arc<LogBuffer>,
     pub started_at: Instant,
     clock: Arc<dyn Clock>,
     log_control: Arc<RwLock<Option<LogControl>>>,
@@ -135,12 +138,29 @@ pub struct AppState {
 
 impl AppState {
     pub fn new(settings: Arc<Settings>) -> Result<Self, StartError> {
-        Self::with_clock(settings, Arc::new(SystemClock::new()))
+        Self::build(settings, Arc::new(SystemClock::new()), None)
     }
 
     pub fn with_clock(settings: Arc<Settings>, clock: Arc<dyn Clock>) -> Result<Self, StartError> {
+        Self::build(settings, clock, None)
+    }
+
+    /// At boot: serve the buffer the tracing layer already feeds, so start-up lines are kept.
+    pub fn with_log_buffer(
+        settings: Arc<Settings>,
+        logs: Arc<LogBuffer>,
+    ) -> Result<Self, StartError> {
+        Self::build(settings, Arc::new(SystemClock::new()), Some(logs))
+    }
+
+    fn build(
+        settings: Arc<Settings>,
+        clock: Arc<dyn Clock>,
+        logs: Option<Arc<LogBuffer>>,
+    ) -> Result<Self, StartError> {
         let boot = settings.config()?;
         let server = build_server(&settings)?;
+        let logs = logs.unwrap_or_else(|| Arc::new(LogBuffer::new(boot.log_buffer)));
         let state = Self {
             admin: Arc::new(AdminTokens::from_config(&boot)),
             boot: Arc::new(boot),
@@ -149,6 +169,7 @@ impl AppState {
             sync_slot: Arc::new(Slot::default()),
             dd_slot: Arc::new(Slot::default()),
             metrics: Arc::new(Metrics::default()),
+            logs,
             started_at: Instant::now(),
             clock,
             log_control: Arc::new(RwLock::new(None)),

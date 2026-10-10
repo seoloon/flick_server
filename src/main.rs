@@ -7,17 +7,21 @@ use std::time::Duration;
 use flicksync::app::{self, AppState, LogControl};
 use flicksync::config::{Config, LogFormat};
 use flicksync::invite::{self, KeySource};
+use flicksync::logs::{LogBuffer, LogCapture};
 use flicksync::settings::{Env, Settings};
 use tracing_subscriber::EnvFilter;
 
-fn init_tracing(cfg: &Config) -> LogControl {
+fn init_tracing(cfg: &Config, logs: Arc<LogBuffer>) -> LogControl {
     use tracing_subscriber::layer::SubscriberExt;
     use tracing_subscriber::util::SubscriberInitExt;
     use tracing_subscriber::{fmt, reload};
 
     let filter = EnvFilter::try_new(&cfg.log_level).unwrap_or_else(|_| EnvFilter::new("info"));
     let (filter, handle) = reload::Layer::new(filter);
-    let registry = tracing_subscriber::registry().with(filter);
+    // The capture comes after the filter: it records what the console shows, and a log-level
+    // reload applies to both. FLICKSYNC_LOG_BUFFER=0 leaves it out.
+    let capture = (logs.capacity() > 0).then(|| LogCapture::new(logs));
+    let registry = tracing_subscriber::registry().with(filter).with(capture);
     match cfg.log_format {
         LogFormat::Json => registry.with(fmt::layer().json()).init(),
         LogFormat::Pretty => registry.with(fmt::layer()).init(),
@@ -142,7 +146,8 @@ async fn main() -> ExitCode {
         return invite_command(cfg, &rest);
     }
 
-    let log_control = init_tracing(&cfg);
+    let logs = Arc::new(LogBuffer::new(cfg.log_buffer));
+    let log_control = init_tracing(&cfg, logs.clone());
     let key_source = match invite::ensure_keys(&mut cfg) {
         Ok(s) => s,
         Err(e) => {
@@ -166,7 +171,7 @@ async fn main() -> ExitCode {
         );
         return ExitCode::from(2);
     }
-    let state = match AppState::new(settings) {
+    let state = match AppState::with_log_buffer(settings, logs) {
         Ok(s) => s,
         Err(e) => {
             eprintln!("configuration error: {e}");
