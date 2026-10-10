@@ -514,7 +514,7 @@ impl<S: tracing::Subscriber> Layer<S> for LogCapture {
         event.record(&mut text);
         self.buffer.push(
             Level::from_tracing(meta.level()),
-            meta.target(),
+            text.target.as_deref().unwrap_or_else(|| meta.target()),
             &text.message,
             &text.fields,
         );
@@ -524,13 +524,16 @@ impl<S: tracing::Subscriber> Layer<S> for LogCapture {
 /// The message and the other fields of one event, as text.
 #[derive(Default)]
 struct EventText {
+    /// The original module path of an event bridged from the `log` crate (`log.target`).
+    target: Option<String>,
     message: String,
     fields: String,
 }
 
 impl EventText {
     fn field(&mut self, name: &str, value: fmt::Arguments<'_>) {
-        // Added by the `log` bridge; the console layer drops them too.
+        // Added by the `log` bridge; the console layer drops them too. (`log.target`, the real
+        // target, is taken in `record_str`.)
         if name.starts_with("log.") {
             return;
         }
@@ -549,7 +552,9 @@ impl EventText {
 
 impl Visit for EventText {
     fn record_str(&mut self, field: &Field, value: &str) {
-        if field.name() == "message" {
+        if field.name() == "log.target" {
+            self.target = Some(value.to_owned());
+        } else if field.name() == "message" {
             self.message.push_str(value);
         } else {
             self.field(field.name(), format_args!("{value:?}"));
@@ -996,6 +1001,21 @@ mod tests {
         assert_eq!(entries[0].target, "flicksync::logs::tests");
         assert_eq!(entries[0].fields, "room_id=\"R1\" streams=3");
         assert_eq!(entries[1].level, Level::Debug);
+    }
+
+    #[test]
+    fn a_log_bridged_event_keeps_its_original_target() {
+        let entries = captured("trace", |_| {
+            tracing::info!(
+                log.target = "hyper::proto",
+                log.module_path = "x",
+                "bridged"
+            );
+            tracing::info!("plain");
+        });
+        assert_eq!(entries[0].target, "hyper::proto");
+        assert_eq!(entries[0].fields, "", "log.* fields are not shown");
+        assert_eq!(entries[1].target, "flicksync::logs::tests");
     }
 
     #[test]
