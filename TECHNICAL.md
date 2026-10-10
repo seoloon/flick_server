@@ -83,7 +83,7 @@ docker compose exec flick-modules flicksync invite  # prints the invitation link
 ```
 
 `docker-compose.yml` starts two services, `flick-modules` and `panel`. The panel
-now starts by default and needs `PANEL_PASSWORD`; set `ENABLE_WEB_PANEL=false`
+starts by default and needs `PANEL_PASSWORD`; set `ENABLE_WEB_PANEL=false`
 to turn it off. To start only the server:
 
 ```sh

@@ -48,7 +48,7 @@ same token from the same `.env`, so there is no second secret to share.
 ### Docker Compose
 
 ```bash
-docker compose up -d --build        # flicksync + panel
+docker compose up -d --build        # flick-modules + panel
 docker compose up -d flick-modules      # FlickSync only
 ```
 

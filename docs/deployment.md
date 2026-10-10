@@ -9,8 +9,9 @@ reconnect, and get `ROOM_NOT_FOUND`).
 ```bash
 git clone <repo> flicksync && cd flicksync
 cp .env.example .env
-# edit .env: set FLICKSYNC_PUBLIC_URL=https://sync.example.com (your public address)
-#            and FLICKSYNC_ENABLED=true (FlickSync is off by default)
+# edit .env: set PANEL_PASSWORD (10+ characters; the panel exits without it)
+#            and FLICKSYNC_PUBLIC_URL=https://sync.example.com (your public address)
+# FlickSync is off by default: switch it on in the panel, or set FLICKSYNC_ENABLED=true in .env
 docker compose up -d --build
 curl http://localhost:8787/health        # {"status":"ok",...}
 docker compose exec flick-modules flicksync invite   # prints the invitation link for Flick
@@ -26,8 +27,8 @@ front (below): Flick clients should use `https://` / `wss://`.
 
 Update: `git pull && docker compose up -d --build`.
 
-Configuration is entirely through `FLICKSYNC_*` environment variables, documented in `.env.example`.
-Nothing is required. Without `FLICKSYNC_AUTH_KEYS` / `FLICKSYNC_AUTH_KEYS_FILE`, a signing key is generated on
+Settings are made in the panel, with the environment as the fallback; every variable is documented in
+[configuration.md](configuration.md) (`.env.example` has the first-start ones). Only `PANEL_PASSWORD` is required. Without `FLICKSYNC_AUTH_KEYS` / `FLICKSYNC_AUTH_KEYS_FILE`, a signing key is generated on
 first start into `FLICKSYNC_DATA_DIR` (default `./data`, `/data` in the image; file `auth_keys`, mode 0600) and
 reused afterwards. **Keep that directory on a persistent volume** (the compose file does): if it is lost, a new key
 is generated and the old invitation stops working. The service refuses to start if the file exists but is empty or
