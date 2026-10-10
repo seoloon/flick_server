@@ -35,10 +35,9 @@ corrupt; it never regenerates a key silently. Set `FLICKSYNC_PUBLIC_URL` so invi
 
 ### Web panel
 
-`ENABLE_WEB_PANEL=true` in `.env`, plus `PANEL_PASSWORD` (the panel and FlickSync derive the admin token from it),
-starts the `panel` service on
-port 3000 (see [../panel/README.md](../panel/README.md)); without it the service exits immediately and nothing is
-published. Put the panel behind your TLS reverse proxy like FlickSync, and forward `X-Forwarded-Proto` and
+The `panel` service starts by default on port 3000 (see [../panel/README.md](../panel/README.md)). It needs
+`PANEL_PASSWORD` in `.env` (the panel and FlickSync derive the admin token from it) and exits with a clear message
+without it; `ENABLE_WEB_PANEL=false` turns it off. Put the panel behind your TLS reverse proxy like FlickSync, and forward `X-Forwarded-Proto` and
 `X-Forwarded-For`. Use `docker compose up -d flick-modules` to run FlickSync alone and skip building the panel.
 
 ### Invitation and key management
@@ -59,7 +58,7 @@ link from the newest configured key, and `--rotate` is refused (rotate in your o
 ## Dokploy / Coolify
 
 1. Create an application from the Git repository using the **Dockerfile** build type (or the Compose file). The `Dockerfile` has two targets: leave the target empty for FlickSync, or set it to `panel` for a separate panel application.
-2. Set `FLICKSYNC_PUBLIC_URL` (your domain) and mount a persistent volume on `/data` (holds the generated signing key). Read the invitation from the logs or run `flicksync invite` in the container terminal. Alternatively set `FLICKSYNC_AUTH_KEYS` yourself as a *secret* variable.
+2. Set `FLICKSYNC_PUBLIC_URL` (your domain) and mount a persistent volume on `/data` (holds the generated signing key and `settings.json`). Read the invitation from the logs or run `flicksync invite` in the container terminal. Alternatively set `FLICKSYNC_AUTH_KEYS` yourself as a *secret* variable.
 3. Container port: `8787` (or your `FLICKSYNC_PORT`). Attach your domain; the platform's Traefik/Caddy handles TLS.
 4. Health check path: `/health` (platforms that use the Docker `HEALTHCHECK` need nothing).
 5. Run **one** replica (rooms live in the memory of one instance, see [scaling.md](scaling.md)).
@@ -198,8 +197,9 @@ sync.example.com {
 * Modules are **off by default**. To keep an existing install running, set `FLICKSYNC_ENABLED=true` (and keep
   `FLICKDD_ENABLED=true` if used) once, or enable the modules from the panel.
 * FlickSync and the panel derive the admin token from `PANEL_PASSWORD` (see [admin-api.md](admin-api.md)).
-  `FLICKSYNC_ADMIN_TOKEN` is deprecated: remove it from `.env`. While it is still set, the panel sends it and
-  FlickSync accepts it, so an older `.env` keeps working.
+  `FLICKSYNC_ADMIN_TOKEN` is no longer read: remove it from `.env`. The admin API token is derived from
+  `PANEL_PASSWORD`, so an install that only had the old token must now set `PANEL_PASSWORD` (10+ characters), or the
+  admin API and the panel stay off.
 * CORS is always active now, even with `FLICKSYNC_CORS_ORIGINS` empty. A preflight (`OPTIONS`) from an origin that is
   not listed answers `200` without `Access-Control-Allow-Origin` (the browser then blocks the request) instead of
   `405`; responses carry `Vary: origin, access-control-request-method, access-control-request-headers`; origins are

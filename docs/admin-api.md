@@ -1,8 +1,7 @@
 # Admin API
 
 Operator endpoints used by the [web panel](../panel/README.md). Disabled (a bare `404`, no body) unless `PANEL_PASSWORD` has 10+
-characters (or the legacy `FLICKSYNC_ADMIN_TOKEN` alone is set); the token is `hex(HMAC-SHA256(PANEL_PASSWORD, "flick-admin-api-v1"))`. The old `FLICKSYNC_ADMIN_TOKEN` still
-works and is deprecated.
+characters; the token is `hex(HMAC-SHA256(PANEL_PASSWORD, "flick-admin-api-v1"))`.
 
 * Password length is measured in bytes server-side, while the panel counts characters; `PANEL_PASSWORD` is trimmed
   server-side, so derive the token from the trimmed value.

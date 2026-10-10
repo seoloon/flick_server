@@ -1,6 +1,6 @@
 # Minimal deployment: one container, everything in memory, no database, no Redis.
 #
-#   cp .env.example .env     # set FLICKSYNC_PUBLIC_URL (https://your.domain) and FLICKSYNC_ENABLED=true
+#   cp .env.example .env     # set PANEL_PASSWORD and FLICKSYNC_PUBLIC_URL
 #   docker compose up -d --build
 #   docker compose exec flick-modules flicksync invite   # the one-link invitation for Flick
 services:
@@ -27,18 +27,21 @@ services:
     # Allow sockets to drain on SIGTERM (FLICKSYNC_SHUTDOWN_GRACE defaults to 10s).
     stop_grace_period: 15s
 
-  # Optional web panel (Next.js). ENABLE_WEB_PANEL=false (the default) makes the container exit
-  # right away and publish nothing; ENABLE_WEB_PANEL=true serves it on port 3000.
+  # Web panel (Next.js), on by default on port 3000 inside the compose network. It needs
+  # PANEL_PASSWORD (10+ characters) and exits with a clear message without it; ENABLE_WEB_PANEL=false
+  # turns it off.
   panel:
     build:
       context: .
       target: panel
     image: flick-panel:latest
-    restart: on-failure
+    restart: on-failure:5
     env_file:
       - .env
     environment:
       FLICKSYNC_URL: http://flick-modules:8787
+      # On by default; ENABLE_WEB_PANEL=false in .env turns it off. Needs PANEL_PASSWORD.
+      ENABLE_WEB_PANEL: ${ENABLE_WEB_PANEL:-true}
     depends_on:
       - flick-modules
     expose:

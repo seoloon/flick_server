@@ -57,7 +57,7 @@ RUN cargo build --release --locked --bin flicksync \
 FROM gcr.io/distroless/cc-debian12:nonroot AS flicksync
 
 COPY --from=flicksync-build /src/target/release/flicksync /usr/local/bin/flicksync
-# Owned by nonroot so a fresh named volume mounted here is writable (holds the signing key).
+# Owned by nonroot so a fresh named volume mounted here is writable (holds the signing key and settings.json).
 COPY --from=flicksync-build --chown=nonroot:nonroot /data /data
 
 ENV FLICKSYNC_HOST=0.0.0.0 \

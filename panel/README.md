@@ -27,23 +27,22 @@ not answer, the page keeps the lines it has, says so, and resumes by itself.
 
 ## Turn it on
 
-Both settings live in the repository's `.env` (see `.env.example`):
+In Docker Compose the panel is on by default. Set these in the repository's `.env` (see `.env.example`; every
+variable is in [../docs/configuration.md](../docs/configuration.md)):
 
 ```
-ENABLE_WEB_PANEL=true
 PANEL_PASSWORD=<10+ characters>          # sign-in to the panel, and the source of the admin token
 # FLICKSYNC_PUBLIC_URL=https://sync.example.com   # so the invitation carries your real address
+# ENABLE_WEB_PANEL=false                          # turns the panel off
 ```
 
 Generate the password with `openssl rand -base64 18`.
 
 The panel talks to Flick Server's [admin API](../docs/admin-api.md) with a token derived from the password:
 `hex(HMAC-SHA256(PANEL_PASSWORD, "flick-admin-api-v1"))`, computed on the trimmed password. The server computes the
-same token from the same `.env`, so there is no second secret to share. `FLICKSYNC_ADMIN_TOKEN` is deprecated: while it
-is set the panel sends it instead (the server still accepts it) and logs a note at start; remove it to use the derived
-token.
+same token from the same `.env`, so there is no second secret to share.
 
-* `ENABLE_WEB_PANEL=false` (the default): the process logs one line and exits `0`. Nothing listens.
+* `ENABLE_WEB_PANEL=false`: the process logs one line and exits `0`. Nothing listens. (Compose sets `true` unless `.env` says otherwise; run standalone, the default is `false`.)
 * `true`: the panel serves on port **3000** (`PORT` changes it; compose only exposes it to the other containers and the reverse proxy). It refuses to start without a password of at least 10 characters (leading and trailing spaces do not count).
 
 ### Docker Compose
@@ -70,9 +69,8 @@ Development: `npm run dev` (port 3000). Checks: `npm run typecheck`, `npm test`.
 
 | Variable | Default | Meaning |
 |---|---|---|
-| `ENABLE_WEB_PANEL` | `false` | Master switch |
+| `ENABLE_WEB_PANEL` | `false` (`true` in compose) | Master switch |
 | `PANEL_PASSWORD` | none | Password of the single panel account; the admin token is derived from it |
-| `FLICKSYNC_ADMIN_TOKEN` | none | Deprecated. When set, sent instead of the derived token; it must then equal the server's value (16+ characters) |
 | `FLICKSYNC_URL` | `http://localhost:8787` | Where the panel reaches FlickSync (set by compose) |
 | `PORT` | `3000` | Listening port inside the process |
 

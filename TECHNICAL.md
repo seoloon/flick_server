@@ -67,7 +67,7 @@ the process and the signing key, but nothing else.
 
 **No database.** Rooms exist only in the memory of the running process. That
 keeps Flick Server simple and fast, and it means a restart ends the rooms in
-progress. The one thing saved on disk is the signing key (see
+progress. What is saved on disk is the signing key and `settings.json` (see
 [the invitation link](#4-the-invitation-link)).
 
 ## 3. Install
@@ -82,9 +82,9 @@ curl localhost:8787/health                      # the server answers
 docker compose exec flick-modules flicksync invite  # prints the invitation link
 ```
 
-`docker-compose.yml` starts two services, `flicksync` and `panel`. The panel
-exits straight away unless `ENABLE_WEB_PANEL=true`, so you can ignore it if you
-do not want it. To start only FlickSync:
+`docker-compose.yml` starts two services, `flick-modules` and `panel`. The panel
+now starts by default and needs `PANEL_PASSWORD`; set `ENABLE_WEB_PANEL=false`
+to turn it off. To start only the server:
 
 ```sh
 docker compose up -d flick-modules
@@ -108,7 +108,7 @@ These tools build **one container per application**. Two ways to use them:
 
 - **Compose service (one deployment, both containers).** Point it at
   `docker-compose.yml`, paste your `.env` in its environment tab, then add a
-  domain for each service: `flicksync` on port `8787` and `panel` on port
+  domain for each service: `flick-modules` on port `8787` and `panel` on port
   `3000`.
 - **Two applications.** Same repository, one with build target `flicksync`
   and one with build target `panel`. The panel also needs `FLICKSYNC_URL` set
@@ -165,18 +165,14 @@ A website for you, the person running the server. It shows:
 - a **FlickDD page**: downloads in progress (with a button to stop one), recent downloads, bytes per day,
   most downloaded titles and the limits in force.
 
-To turn it on, add this to `.env` and redeploy:
-
-```sh
-ENABLE_WEB_PANEL=true
-PANEL_PASSWORD=<10+ characters>        # openssl rand -base64 18
-```
+On by default. Set `PANEL_PASSWORD` (10+ characters, for example from
+`openssl rand -base64 18`) in `.env` and redeploy; `ENABLE_WEB_PANEL=false`
+turns it off.
 
 `PANEL_PASSWORD` is the only secret: the panel and FlickSync both derive the
 admin API token from it, so both containers must read the same `.env` (the
 compose file does). Without it FlickSync keeps its admin API switched off. The
 panel refuses to start with a password under 10 characters.
-`FLICKSYNC_ADMIN_TOKEN` is deprecated and can be removed.
 
 It listens on port `3000`, or on the domain you gave it. Details and security
 model: [panel/README.md](panel/README.md). The API behind it:
@@ -207,16 +203,16 @@ and *Strip Path* on.
 
 ## 7. Settings
 
-Everything is configured with environment variables, read from `.env`. All are
-optional. The complete, commented list is in [.env.example](.env.example); here
-are the ones that matter most.
+Settings are made in the panel and stored in `settings.json`; environment
+variables are the fallback. Every variable: [docs/configuration.md](docs/configuration.md);
+`.env.example` has the first-start ones. Here are the ones that matter most.
 
 | Setting | Default | Meaning |
 |---|---|---|
 | `FLICKSYNC_PUBLIC_URL` | unset | Your public address. Set it behind a proxy. |
 | `FLICKSYNC_PORT` | `8787` | Port FlickSync listens on. |
-| `FLICKSYNC_DATA_DIR` | `/data` in Docker | Where the signing key is stored. Keep it on a volume. |
-| `ENABLE_WEB_PANEL` | `false` | Turns the panel on. |
+| `FLICKSYNC_DATA_DIR` | `/data` in Docker | Where the signing key and `settings.json` are stored. Keep it on a volume. |
+| `ENABLE_WEB_PANEL` | `true` (compose) | Set `false` to turn the panel off. |
 | `FLICKSYNC_LOG_LEVEL` | `info` | How chatty the logs are. |
 | `FLICKSYNC_MAX_ROOM_SIZE` | `100` | People per room. |
 | `FLICKSYNC_MAX_ROOMS` | `10000` | Rooms at once. |
@@ -367,7 +363,7 @@ nor the `?token=` query string is logged.
   program checks itself with `flicksync healthcheck`.
 - **Shutting down** gives open connections `FLICKSYNC_SHUTDOWN_GRACE` seconds
   (10 by default) to finish.
-- **Backups:** only the `/data` volume matters, as it holds the signing key.
+- **Backups:** only the `/data` volume matters, as it holds the signing key and `settings.json`.
   Without it, issued invitation links stop working.
 
 ## 12. Development
