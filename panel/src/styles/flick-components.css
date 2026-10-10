@@ -253,8 +253,8 @@
 .fk-sidebar--collapsed { width: var(--sidebar-w-collapsed); }
 .fk-sidebar__panel { display: flex; height: 100%; flex-direction: column; gap: 0.25rem; overflow: hidden; border-radius: var(--radius-sidebar); padding: 0.75rem; }
 .fk-sidebar__brand { margin-bottom: 1.25rem; display: flex; align-items: center; padding: 0.5rem 0.75rem 0; }
-.fk-sidebar__brand svg { height: 1.2rem; width: auto; max-width: none; display: block; }
-.fk-sidebar__clip { display: block; overflow: hidden; width: calc(1.2rem * 3.2591); transition: width 0.5s cubic-bezier(0.32, 0.72, 0, 1); }
+.fk-sidebar__brand svg, .fk-sidebar__brand img { height: 1.2rem; width: auto; max-width: none; display: block; }
+.fk-sidebar__clip { display: block; overflow: hidden; width: calc(1.2rem * 6.963); transition: width 0.5s cubic-bezier(0.32, 0.72, 0, 1); }
 .fk-sidebar--collapsed .fk-sidebar__clip { width: calc(1.2rem * 0.99505); }
 .fk-sidebar__nav { display: flex; flex-direction: column; gap: 0.125rem; }
 .fk-sidebar__foot { margin-top: auto; display: flex; flex-direction: column; gap: 0.125rem; }
@@ -331,3 +331,4 @@
 
 /* ---------- Logo ---------- */
 .fk-logo { display: block; flex-shrink: 0; }
+.fk-wordmark { display: block; flex-shrink: 0; max-width: none; }

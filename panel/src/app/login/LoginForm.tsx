@@ -2,7 +2,7 @@
 
 import { useActionState, useState } from "react";
 
-import { Logo } from "@/components/flick/icons";
+import { Wordmark } from "@/components/flick/icons";
 import { Button, Notice, TextField } from "@/components/flick/ui";
 
 import { type LoginState, login } from "./actions";
@@ -13,7 +13,7 @@ export function LoginForm() {
   return (
     <>
       <div className="login__brand">
-        <Logo variant="wordmark" height="1.5rem" title="Flick" />
+        <Wordmark height="1.5rem" />
         <h1 className="login__title">Flick Panel</h1>
         <p className="login__lead">Sign in to manage your Flick Server.</p>
       </div>

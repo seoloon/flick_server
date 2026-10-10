@@ -7,7 +7,7 @@ import { useEffect, useState } from "react";
 import { logout } from "@/app/login/actions";
 import { HOME, LOGS, MODULES, SETTINGS } from "@/lib/modules";
 
-import { Icon, Logo } from "./flick/icons";
+import { Icon, Wordmark } from "./flick/icons";
 
 const STORAGE_KEY = "flick-panel-sidebar-collapsed";
 
@@ -44,7 +44,7 @@ export function PanelSidebar() {
       <div className="fk-sidebar__panel fk-glass">
         <div className="fk-sidebar__brand">
           <span className="fk-sidebar__clip">
-            <Logo variant="wordmark" height="1.2rem" title="Flick" />
+            <Wordmark height="1.2rem" />
           </span>
         </div>
         <nav aria-label="Main" className="fk-sidebar__nav">

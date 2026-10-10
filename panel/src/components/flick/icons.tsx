@@ -244,3 +244,16 @@ export function Logo({
     </svg>
   );
 }
+
+/** The Flick Server wordmark (public/flickserver-wordmark.svg), 6.963:1. The mark is its first 0.995 of height. */
+export function Wordmark({ height = "1.25rem", className }: { height?: string; className?: string }) {
+  return (
+    // eslint-disable-next-line @next/next/no-img-element
+    <img
+      className={["fk-wordmark", className].filter(Boolean).join(" ")}
+      src="/flickserver-wordmark.svg"
+      alt="Flick Server"
+      style={{ height, width: "auto" }}
+    />
+  );
+}

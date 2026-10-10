@@ -93,7 +93,6 @@ a.fk-btn { text-decoration: none; }
 .login { display: grid; min-height: 100dvh; place-items: center; padding: 1.5rem; }
 .login__card { display: flex; width: min(26rem, 100%); flex-direction: column; gap: 1.5rem; border-radius: var(--radius-dialog); padding: 2.25rem; }
 .login__brand { display: flex; flex-direction: column; align-items: flex-start; gap: 0.5rem; }
-.login__brand .fk-logo { color: rgb(255 255 255 / 0.95); }
 .login__title { font-size: 1.5rem; line-height: 2rem; font-weight: 700; letter-spacing: -0.025em; }
 .login__lead { margin: 0; font-size: 0.9375rem; line-height: 1.5; color: var(--muted-foreground); }
 .login form { display: flex; flex-direction: column; gap: 1.25rem; }
