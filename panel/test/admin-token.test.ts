@@ -27,16 +27,22 @@ test("the length is counted in bytes, as the server does", () => {
   assert.notEqual(deriveAdminToken("ééééé"), "");
 });
 
-test("the legacy FLICKSYNC_ADMIN_TOKEN wins while it is set", () => {
+test("a leftover FLICKSYNC_ADMIN_TOKEN is ignored", () => {
   assert.deepEqual(
     resolveAdminToken({ PANEL_PASSWORD: PW, FLICKSYNC_ADMIN_TOKEN: "  legacy-token-0123456789 " }),
-    { token: "legacy-token-0123456789", source: "legacy" },
+    { token: TOKEN, source: "password" },
   );
-  assert.deepEqual(resolveAdminToken({ PANEL_PASSWORD: PW, FLICKSYNC_ADMIN_TOKEN: "   " }), {
-    token: TOKEN,
-    source: "password",
+  assert.deepEqual(resolveAdminToken({ FLICKSYNC_ADMIN_TOKEN: "legacy-token-0123456789" }), {
+    token: "",
+    source: "none",
   });
+});
+
+test("the token comes from PANEL_PASSWORD alone", () => {
   assert.deepEqual(resolveAdminToken({ PANEL_PASSWORD: PW }), { token: TOKEN, source: "password" });
+});
+
+test("a short or missing password gives no token", () => {
   assert.deepEqual(resolveAdminToken({ PANEL_PASSWORD: "short" }), { token: "", source: "none" });
   assert.deepEqual(resolveAdminToken({}), { token: "", source: "none" });
 });

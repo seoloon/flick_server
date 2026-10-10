@@ -18,7 +18,7 @@ export const ADMIN_ERROR_TEXT: Record<AdminErrorCode, string> = {
   ADMIN_API_DISABLED:
     "The server's admin API is off. Give the server the same PANEL_PASSWORD as the panel (10+ characters, same .env), then restart it.",
   ADMIN_TOKEN_REJECTED:
-    "The server rejected the panel's admin token. The panel and the server must share the same PANEL_PASSWORD (and, if you still set it, the same FLICKSYNC_ADMIN_TOKEN). Fix .env, then restart both.",
+    "The server rejected the panel's admin token. The panel and the server must share the same PANEL_PASSWORD. Fix .env, then restart both.",
   DD_DISABLED: "FlickDD is not running. Start it from the Overview or the FlickDD page.",
   SIGNED_OUT: "Your session has ended. Sign in again.",
   FORBIDDEN:

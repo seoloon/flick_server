@@ -117,8 +117,9 @@ test("the panel's own texts point to PANEL_PASSWORD, not to the old admin token"
   for (const code of ["ADMIN_TOKEN_MISSING", "ADMIN_API_DISABLED", "ADMIN_TOKEN_REJECTED"] as const) {
     assert.match(ADMIN_ERROR_TEXT[code], /PANEL_PASSWORD/, code);
   }
-  assert.doesNotMatch(ADMIN_ERROR_TEXT.ADMIN_TOKEN_MISSING, /FLICKSYNC_ADMIN_TOKEN/);
-  assert.doesNotMatch(ADMIN_ERROR_TEXT.ADMIN_API_DISABLED, /FLICKSYNC_ADMIN_TOKEN/);
+  for (const code of Object.keys(ADMIN_ERROR_TEXT) as (keyof typeof ADMIN_ERROR_TEXT)[]) {
+    assert.doesNotMatch(ADMIN_ERROR_TEXT[code], /FLICKSYNC_ADMIN_TOKEN/, code);
+  }
 });
 
 test("the panel's route refusals have their own text", () => {

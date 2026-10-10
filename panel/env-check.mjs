@@ -21,16 +21,5 @@ export function checkPanelEnv(env) {
       "PANEL_PASSWORD must be set and at least 10 characters, not counting leading and trailing spaces (e.g. `openssl rand -base64 18`). The panel signs in with it and derives the server's admin token from it.",
     );
   }
-  const legacy = String(env.FLICKSYNC_ADMIN_TOKEN ?? "").trim();
-  // The server counts bytes, not characters: "é" is two of them.
-  if (legacy && Buffer.byteLength(legacy, "utf8") < 16) {
-    problems.push(
-      "FLICKSYNC_ADMIN_TOKEN is deprecated: remove it from .env, the admin token now comes from PANEL_PASSWORD. If you keep it, it must be at least 16 characters, as on the server.",
-    );
-  } else if (legacy) {
-    notes.push(
-      "FLICKSYNC_ADMIN_TOKEN is deprecated. The panel sends it while it is set; remove it from .env (for the panel and the server) to use the token derived from PANEL_PASSWORD.",
-    );
-  }
   return { problems, notes };
 }
