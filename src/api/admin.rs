@@ -10,13 +10,13 @@ use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use axum::Json;
-use axum::extract::{FromRequestParts, Path, State};
+use axum::extract::{FromRequestParts, Path, Query, State};
 use axum::http::request::Parts;
 use axum::http::{HeaderValue, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use std::collections::BTreeMap;
 
-use axum::extract::rejection::JsonRejection;
+use axum::extract::rejection::{JsonRejection, QueryRejection};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use tracing::warn;
@@ -28,6 +28,7 @@ use crate::auth::parse_key_entry;
 use crate::dd::{DdState, now_ms as dd_now_ms};
 use crate::errors::{Error, ErrorCode};
 use crate::invite;
+use crate::logs::{LogEntry, LogQuery};
 use crate::modules::ModuleId;
 use crate::room::AdminRoomView;
 use crate::room::manager::share_code;
@@ -499,4 +500,36 @@ pub async fn reload_server(
         ApiError(e.admin_error())
     })?;
     Ok(no_store(StatusCode::OK, json!({ "reloaded": true })))
+}
+
+/// `GET /admin/v1/logs?after=<seq>&level=<min>&limit=<n>`: the latest log lines kept in memory,
+/// oldest first, after a cursor. Lost on restart; `boot` tells one run from the next.
+pub async fn logs(
+    _: AdminAuth,
+    State(state): State<AppState>,
+    query: Result<Query<Vec<(String, String)>>, QueryRejection>,
+) -> Result<Response, ApiError> {
+    let invalid = |message: String| ApiError(Error::new(ErrorCode::InvalidQuery, message));
+    let Query(pairs) = query.map_err(|_| {
+        invalid(
+            "The query string could not be read. Expected after=<seq>, level=<error|warn|info|debug|trace> and limit=<1-1000>, each at most once."
+                .to_owned(),
+        )
+    })?;
+    let q = LogQuery::from_pairs(&pairs).map_err(invalid)?;
+    let page = state.logs.query(&q);
+    // Built after `query` returned, outside the buffer's lock.
+    let entries: Vec<&LogEntry> = page.entries.iter().map(|e| e.as_ref()).collect();
+    Ok(no_store(
+        StatusCode::OK,
+        json!({
+            "boot": state.logs.boot(),
+            "capacity": state.logs.capacity(),
+            "log_level": state.server().cfg.log_level,
+            "entries": entries,
+            "next": page.next,
+            "more": page.more,
+            "dropped": page.dropped,
+        }),
+    ))
 }

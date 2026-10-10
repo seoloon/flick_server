@@ -50,6 +50,8 @@ pub enum ErrorCode {
     UnknownScope,
     UnknownModule,
     UnknownAction,
+    /// A query parameter is unknown, repeated or has an invalid value.
+    InvalidQuery,
     Internal,
 }
 
@@ -71,7 +73,7 @@ impl ErrorCode {
             Internal | SettingsWriteFailed | ReloadFailed => 500,
             InvalidMessage | UnknownType | UnsupportedVersion | InvalidPayload
             | InvalidPosition | InvalidRate | InvalidSequence | InvalidMedia | NoMedia
-            | SettingsInvalid | UnknownSetting => 400,
+            | SettingsInvalid | UnknownSetting | InvalidQuery => 400,
         }
     }
 }
@@ -109,6 +111,7 @@ mod tests {
             (ErrorCode::UnknownScope, "UNKNOWN_SCOPE", 404),
             (ErrorCode::UnknownModule, "UNKNOWN_MODULE", 404),
             (ErrorCode::UnknownAction, "UNKNOWN_ACTION", 404),
+            (ErrorCode::InvalidQuery, "INVALID_QUERY", 400),
         ] {
             assert_eq!(code.http_status(), status, "{wire}");
             assert_eq!(serde_json::to_string(&code).unwrap(), format!("\"{wire}\""));

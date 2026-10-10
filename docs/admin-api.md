@@ -26,6 +26,7 @@ filesystem path (only the file names `settings.json` and `auth_keys`). The serve
 | `UNKNOWN_SCOPE` | 404 | `GET`/`PUT /settings/{scope}` | The scope is not `server`, `flicksync` or `flickdd`; the message lists the valid ones |
 | `UNKNOWN_MODULE` | 404 | `POST /modules/{id}/{action}` | The module is not `flicksync` or `flickdd`; the message lists the valid ones |
 | `UNKNOWN_ACTION` | 404 | `POST /modules/{id}/{action}` | The action is not `start`, `stop` or `reload`; the message lists the valid ones |
+| `INVALID_QUERY` | 400 | `GET /logs` | A query parameter is unknown, given twice, or has an invalid value (the message names it, the value received and what is expected) |
 | `INVALID_PAYLOAD` | 400 | `PUT /settings/{scope}` | The body is not JSON, lacks `Content-Type: application/json`, is not `{"values": {...}}`, or a value is an array or an object |
 | `UNKNOWN_SETTING` | 400 | `PUT /settings/{scope}` | A name is not a setting of this scope: unknown, boot-only (environment only), or of another scope (the message says which) |
 | `SETTINGS_INVALID` | 400 | `PUT /settings/{scope}`, `POST /settings/server/reload` | A value, or the merged result, fails validation (the message names the setting, what is wrong and what is expected); nothing was written. On a reload: the stored server settings are invalid, the previous ones stay in force |
@@ -60,6 +61,7 @@ the status `message`, written the same way (setting, problem, expected value, th
 | `GET /admin/v1/settings/{server\|flicksync\|flickdd}` | Every editable setting with value, source (`panel`, `environment`, `default`), default; secrets only as `set` |
 | `PUT /admin/v1/settings/{scope}` | Partial update `{"values": {"NAME": value-or-null}}`; the result is validated as a whole, `400` and nothing written otherwise |
 | `POST /admin/v1/settings/server/reload` | Apply the server scope (keys, public address, CORS, metrics, log level) without restarting modules |
+| `GET /admin/v1/logs` | The server's latest log lines, kept in memory (lost on restart), newer than a cursor |
 
 ### `GET /admin/v1/invite`
 
@@ -204,6 +206,40 @@ Re-reads the server scope and applies it live: signing keys, public address, COR
 Modules keep running. Answer `200`: `{"reloaded": true}`. On failure the previous settings stay active: an invalid
 stored configuration answers `400 SETTINGS_INVALID`, a signing key file that cannot be read, created or used answers
 `500 RELOAD_FAILED`.
+
+## Logs
+
+### `GET /admin/v1/logs?after=<seq>&level=<min>&limit=<n>`
+
+The server keeps its latest log lines in memory: the last `FLICKSYNC_LOG_BUFFER` events (default `2000`, `0` = none,
+at most `10000`) that the log filter in force (`FLICKSYNC_LOG_LEVEL`) lets through. They are lost on restart.
+
+| Parameter | Default | Meaning |
+|---|---|---|
+| `after` | `0` | Return lines with a larger `seq` (the `next` of the previous answer) |
+| `level` | `trace` | Least severe level returned: `error`, `warn`, `info`, `debug` or `trace` (case ignored) |
+| `limit` | `500` | Most lines returned, `1` to `1000` |
+
+```json
+{
+  "boot": 1790959000000, "capacity": 2000, "log_level": "info",
+  "entries": [{ "seq": 41, "ts": 1790960000123, "level": "warn", "target": "flicksync::api::admin",
+                "message": "admin API: invalid or missing token", "fields": "" }],
+  "next": 41, "more": false, "dropped": 0
+}
+```
+
+* Lines come oldest first. `seq` starts at 1 and grows by one per line within a run; `ts` is in ms since the epoch.
+* `next` is the `seq` of the last line examined, including lines skipped by `level` (or `after` when none was): send
+  it as the next `after`. While `more` is true, ask again at once.
+* `dropped` counts the lines after `after` that were already pushed out of the buffer, whatever their level.
+* `boot` is when this run started (ms). When it changes the server restarted: start again from `after=0`.
+* `fields` holds the event's other fields as `name=value`, separated by spaces. A field named like a token,
+  secret, password, key, cookie or credential is stored as `name=<redacted>`, and so is the value after `Bearer ` or of
+  such a `name=value` inside a text. `message` is cut at 2048 bytes and `fields` at 1024 (then `…`).
+* `log_level` is the log filter in force. `capacity` is `0` when the buffer is off.
+
+Errors: `400 INVALID_QUERY` (unknown or repeated parameter, invalid value), `401 UNAUTHENTICATED`.
 
 ## FlickDD
 

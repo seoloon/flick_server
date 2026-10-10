@@ -216,6 +216,11 @@ sync.example.com {
 - **Logs**: structured via `tracing`; `FLICKSYNC_LOG_FORMAT=json` for log shippers, `FLICKSYNC_LOG_LEVEL=info`
   (or `info,flicksync::room=debug`). Events include `room_id`, `participant_id` and `server_id`. Tokens, passwords and chat
   contents are never logged (and query strings are not logged).
+- **Logs in the panel**: the server also keeps its last `FLICKSYNC_LOG_BUFFER` lines (default `2000`, at most `10000`,
+  `0` turns this off; read at start) **in memory only**, for the panel's Logs page and `GET /admin/v1/logs`. They are
+  lost on every restart: keep `docker compose logs` or a log shipper for history. The same level filter applies, and
+  values that look like secrets (after `Bearer `, `token=...`, fields named like a token, password or key) are stored
+  as `<redacted>`.
 - **Metrics** (optional): `FLICKSYNC_METRICS_ENABLED=true` exposes Prometheus text at `GET /metrics`
   (`rooms_active`, `participants_active`, `websocket_connections`, `rooms_created_total`, `messages_received_total`,
   `sync_corrections_total`, `rtt_average_milliseconds`, `auth_failures_total`, …). Protect it with

@@ -47,6 +47,7 @@ pub fn router(state: AppState) -> Router {
             "/admin/v1/settings/server/reload",
             post(admin::reload_server),
         )
+        .route("/admin/v1/logs", get(admin::logs))
         .layer(axum::middleware::map_response(admin::no_store_layer));
 
     Router::new()
