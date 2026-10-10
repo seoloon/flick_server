@@ -1,8 +1,5 @@
 <p align="center">
-  <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="docs/assets/flickserver-wordmark-flat.svg">
-    <img src="docs/assets/flickserver-wordmark-flat-dark.svg" alt="Flick Server" width="360">
-  </picture>
+  <img src="docs/assets/flickserver-wordmark.svg" alt="Flick Server" width="360">
 </p>
 
 <h3 align="center">Flick Server: the toolbox behind Flick.</h3>
