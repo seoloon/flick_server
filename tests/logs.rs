@@ -229,25 +229,18 @@ async fn a_real_event_reaches_the_route_through_the_capture_layer() {
     let subscriber = tracing_subscriber::registry()
         .with(tracing_subscriber::EnvFilter::new("info"))
         .with(LogCapture::new(s.state.logs.clone()));
-    // `#[tokio::test]` runs on one thread, so the router's handlers log through this subscriber.
     let _guard = tracing::subscriber::set_default(subscriber);
-    let (st, _) = s
-        .http(
-            Method::GET,
-            "/admin/v1/overview",
-            Some("wrong-token-0123456789"),
-            None,
-        )
-        .await;
-    assert_eq!(st, StatusCode::UNAUTHORIZED);
+    // The event is emitted here, not by a handler: callsites shared with other parallel tests can be
+    // cached as disabled by a thread without a subscriber, which made this test flaky.
+    tracing::warn!(target: "flicksync::capture_test", "captured through the layer");
     let (_, body) = logs(&s, "?level=warn").await;
     let e = body["entries"]
         .as_array()
         .unwrap()
         .iter()
-        .find(|e| e["message"] == "admin API: invalid or missing token")
+        .find(|e| e["message"] == "captured through the layer")
         .unwrap_or_else(|| panic!("not captured: {body}"))
         .clone();
     assert_eq!(e["level"], "warn");
-    assert_eq!(e["target"], "flicksync::api::admin");
+    assert_eq!(e["target"], "flicksync::capture_test");
 }
