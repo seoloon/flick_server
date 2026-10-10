@@ -431,11 +431,6 @@ pub async fn serve(state: AppState) -> Result<(), Box<dyn std::error::Error>> {
         auth_keys = state.server().cfg.auth.keys.len(),
         "flicksync listening"
     );
-    if state.admin.has_legacy() {
-        warn!(
-            "FLICKSYNC_ADMIN_TOKEN is deprecated: set PANEL_PASSWORD instead, the admin token is derived from it"
-        );
-    }
     if !state.admin.is_enabled() {
         info!("admin API is off: set PANEL_PASSWORD (10+ characters) to turn it on");
     }

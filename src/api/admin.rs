@@ -1,7 +1,6 @@
 //! Operator API for the web panel: `/admin/v1/*`.
 //!
-//! Disabled (404) unless `PANEL_PASSWORD` (10+ characters) or the deprecated
-//! `FLICKSYNC_ADMIN_TOKEN` is set; then every call needs
+//! Disabled (404) unless `PANEL_PASSWORD` (10+ characters) is set; then every call needs
 //! `Authorization: Bearer <token>`, compared in constant time. It exposes the invitation
 //! (which contains the signing key), so responses are never cacheable and the token must stay
 //! server-side: the panel's server calls this API, browsers never see the token.
@@ -51,7 +50,7 @@ impl FromRequestParts<AppState> for AdminAuth {
         let message = match bearer_token(&parts.headers) {
             Some(t) if state.admin.accepts(t) => return Ok(AdminAuth),
             Some(_) => {
-                "The admin token was not accepted. It must be derived from the server's PANEL_PASSWORD (or equal the deprecated FLICKSYNC_ADMIN_TOKEN): check that the panel and the server use the same password."
+                "The admin token was not accepted. It must be derived from the server's PANEL_PASSWORD: check that the panel and the server use the same password."
             }
             None => {
                 "The request carries no admin token. Send Authorization: Bearer <token>, with the token derived from PANEL_PASSWORD."

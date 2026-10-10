@@ -11,10 +11,11 @@ use flicksync::logs::{Level, LogBuffer, LogCapture};
 use flicksync::settings::{Env, Settings};
 use serde_json::Value;
 
-const ADMIN: &str = "admin-token-0123456789abcdef";
+const PASSWORD: &str = "correct horse battery staple";
+const ADMIN: &str = "602faf385fbedfdd2399872d5e5ec4359027f10a59806d0d6c4b598faf591011";
 
 async fn start(extra: &[(&str, &str)]) -> TestServer {
-    let mut vars = vec![("FLICKSYNC_ADMIN_TOKEN", ADMIN)];
+    let mut vars = vec![("PANEL_PASSWORD", PASSWORD)];
     vars.extend_from_slice(extra);
     TestServer::start(&vars).await
 }

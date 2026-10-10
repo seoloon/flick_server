@@ -6,10 +6,11 @@ use axum::http::{Method, StatusCode};
 use common::*;
 use serde_json::json;
 
-const ADMIN: &str = "admin-token-0123456789abcdef";
+const PASSWORD: &str = "correct horse battery staple";
+const ADMIN: &str = "602faf385fbedfdd2399872d5e5ec4359027f10a59806d0d6c4b598faf591011";
 
 async fn start() -> TestServer {
-    TestServer::start(&[("FLICKSYNC_ADMIN_TOKEN", ADMIN)]).await
+    TestServer::start(&[("PANEL_PASSWORD", PASSWORD)]).await
 }
 
 #[tokio::test]
@@ -24,6 +25,20 @@ async fn admin_api_is_disabled_without_a_token() {
         let (st, _) = s.http(Method::GET, path, Some(ADMIN), None).await;
         assert_eq!(st, StatusCode::NOT_FOUND, "{path}");
     }
+}
+
+#[tokio::test]
+async fn the_legacy_token_alone_no_longer_enables_the_admin_api() {
+    let s = TestServer::start(&[("FLICKSYNC_ADMIN_TOKEN", "legacy-token-0123456789")]).await;
+    let (st, _) = s
+        .http(
+            Method::GET,
+            "/admin/v1/overview",
+            Some("legacy-token-0123456789"),
+            None,
+        )
+        .await;
+    assert_eq!(st, StatusCode::NOT_FOUND);
 }
 
 #[tokio::test]
@@ -73,7 +88,7 @@ async fn overview_reports_live_numbers() {
 #[tokio::test]
 async fn invite_returns_the_link_and_a_qr_and_is_not_cacheable() {
     let s = TestServer::start(&[
-        ("FLICKSYNC_ADMIN_TOKEN", ADMIN),
+        ("PANEL_PASSWORD", PASSWORD),
         ("FLICKSYNC_PUBLIC_URL", "https://sync.example.com"),
     ])
     .await;
@@ -90,7 +105,7 @@ async fn invite_returns_the_link_and_a_qr_and_is_not_cacheable() {
 
     // A path prefix (reverse proxy) ends up in the link and in the address.
     let p = TestServer::start(&[
-        ("FLICKSYNC_ADMIN_TOKEN", ADMIN),
+        ("PANEL_PASSWORD", PASSWORD),
         ("FLICKSYNC_PUBLIC_URL", "https://flick.example.com/services"),
     ])
     .await;
@@ -274,7 +289,7 @@ mod dd_admin {
 
     /// FlickDD enabled and an admin token; the fake media server is kept alive by leaking it.
     async fn start_dd_admin(size: u64, extra: &[(&str, &str)]) -> TestServer {
-        let mut vars = vec![("FLICKSYNC_ADMIN_TOKEN", ADMIN)];
+        let mut vars = vec![("PANEL_PASSWORD", PASSWORD)];
         vars.extend_from_slice(extra);
         let (fake, server) = start_dd(size, &vars).await;
         std::mem::forget(fake);

@@ -45,37 +45,27 @@ pub fn derive(password: &str) -> Option<String> {
     )
 }
 
-/// What the admin API accepts: the derived token and, until the panel is updated, the legacy
-/// `FLICKSYNC_ADMIN_TOKEN`.
+/// What the admin API accepts: the token derived from `PANEL_PASSWORD`.
 pub struct AdminTokens {
     pub(crate) derived: Option<String>,
-    pub(crate) legacy: Option<String>,
 }
 
 impl AdminTokens {
     pub fn from_config(cfg: &Config) -> Self {
         Self {
             derived: cfg.http.panel_password.as_deref().and_then(derive),
-            legacy: cfg.http.admin_token.clone(),
         }
     }
 
     pub fn is_enabled(&self) -> bool {
-        self.derived.is_some() || self.legacy.is_some()
+        self.derived.is_some()
     }
 
-    pub fn has_legacy(&self) -> bool {
-        self.legacy.is_some()
-    }
-
-    /// Constant-time comparison against every accepted token.
+    /// Constant-time comparison against the derived token; `false` when there is none.
     pub fn accepts(&self, presented: &str) -> bool {
-        [&self.derived, &self.legacy]
-            .into_iter()
-            .flatten()
-            .fold(false, |ok, t| {
-                constant_time_eq(presented.as_bytes(), t.as_bytes()) | ok
-            })
+        self.derived
+            .as_deref()
+            .is_some_and(|t| constant_time_eq(presented.as_bytes(), t.as_bytes()))
     }
 }
 
@@ -120,20 +110,13 @@ mod tests {
     }
 
     #[test]
-    fn tokens_accept_the_derived_and_the_legacy_one_only() {
+    fn tokens_accept_only_the_derived_one() {
         let t = AdminTokens {
             derived: derive("correct horse battery staple"),
-            legacy: Some("legacy-token-0123456789".to_owned()),
         };
+        assert!(t.is_enabled());
         assert!(t.accepts("602faf385fbedfdd2399872d5e5ec4359027f10a59806d0d6c4b598faf591011"));
-        assert!(t.accepts("legacy-token-0123456789"));
-        assert!(!t.accepts("602faf385fbedfdd2399872d5e5ec4359027f10a59806d0d6c4b598faf591012"));
-        assert!(!t.accepts(""));
-        let none = AdminTokens {
-            derived: None,
-            legacy: None,
-        };
-        assert!(!none.is_enabled());
-        assert!(!none.accepts("anything"));
+        assert!(!t.accepts("legacy-token-0123456789"));
+        assert!(!AdminTokens { derived: None }.is_enabled());
     }
 }

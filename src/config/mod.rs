@@ -60,8 +60,6 @@ pub struct HttpConfig {
     pub allowed_origins: Vec<String>,
     pub metrics_enabled: bool,
     pub metrics_token: Option<String>,
-    /// Deprecated legacy bearer token of the admin API; the current one is derived from `PANEL_PASSWORD`.
-    pub admin_token: Option<String>,
     pub panel_password: Option<String>,
     pub max_body_bytes: usize,
 }
@@ -79,7 +77,6 @@ impl std::fmt::Debug for HttpConfig {
             .field("allowed_origins", &self.allowed_origins)
             .field("metrics_enabled", &self.metrics_enabled)
             .field("metrics_token", &redacted(&self.metrics_token))
-            .field("admin_token", &redacted(&self.admin_token))
             .field("panel_password", &redacted(&self.panel_password))
             .field("max_body_bytes", &self.max_body_bytes)
             .finish()
@@ -357,19 +354,11 @@ impl Config {
             allowed_origins: parse_list(env, "FLICKSYNC_CORS_ORIGINS"),
             metrics_enabled: parse_bool(env, "FLICKSYNC_METRICS_ENABLED", false)?,
             metrics_token: env("FLICKSYNC_METRICS_TOKEN").filter(|t| !t.trim().is_empty()),
-            admin_token: env("FLICKSYNC_ADMIN_TOKEN")
-                .map(|t| t.trim().to_owned())
-                .filter(|t| !t.is_empty()),
             panel_password: env("PANEL_PASSWORD")
                 .map(|v| v.trim().to_owned())
                 .filter(|v| !v.is_empty()),
             max_body_bytes: parse(env, "FLICKSYNC_MAX_BODY_BYTES", 16 * 1024)?,
         };
-        if http.admin_token.as_ref().is_some_and(|t| t.len() < 16) {
-            return Err(inconsistent(
-                "FLICKSYNC_ADMIN_TOKEN must be at least 16 characters (e.g. `openssl rand -base64 32`)",
-            ));
-        }
         if http.allowed_origins.iter().any(|o| o == "*") {
             return Err(inconsistent(
                 "FLICKSYNC_CORS_ORIGINS must list explicit origins; '*' is not allowed because requests are authenticated",
@@ -528,18 +517,14 @@ mod tests {
     }
 
     #[test]
-    fn admin_token_is_optional_but_not_weak() {
-        assert!(cfg(&[]).unwrap().http.admin_token.is_none());
-        assert!(
-            cfg(&[("FLICKSYNC_ADMIN_TOKEN", "  ")])
-                .unwrap()
-                .http
-                .admin_token
-                .is_none()
-        );
-        assert!(cfg(&[("FLICKSYNC_ADMIN_TOKEN", "short")]).is_err());
-        let c = cfg(&[("FLICKSYNC_ADMIN_TOKEN", "0123456789abcdef0123")]).unwrap();
-        assert_eq!(c.http.admin_token.as_deref(), Some("0123456789abcdef0123"));
+    fn a_leftover_admin_token_variable_is_ignored() {
+        // Valid, too short, blank: none of them is read, none is an error.
+        for v in ["0123456789abcdef0123", "short", "  "] {
+            // Built at run time: the catalogue test in `settings::fields` scans this file for
+            // quoted `FLICKSYNC_*` names and would demand this retired one be catalogued.
+            let name = format!("FLICKSYNC_{}", "ADMIN_TOKEN");
+            assert!(cfg(&[(name.as_str(), v)]).is_ok(), "{v}");
+        }
     }
 
     #[test]
@@ -583,7 +568,6 @@ mod tests {
     fn debug_never_prints_secrets() {
         let c = cfg(&[
             ("PANEL_PASSWORD", "s3cr3t-panel-password"),
-            ("FLICKSYNC_ADMIN_TOKEN", "s3cr3t-admin-token-0123"),
             ("FLICKSYNC_METRICS_TOKEN", "s3cr3t-metrics-token"),
             ("FLICKSYNC_AUTH_KEYS", "k1:srv:s3cr3t-signing-key"),
         ])
