@@ -39,4 +39,5 @@ export const MODULES: PanelModule[] = [
 ];
 
 export const HOME = { id: "overview", label: "Overview", href: "/", icon: "house" as IconName };
+export const LOGS = { id: "logs", label: "Logs", href: "/logs", icon: "scroll-text" as IconName };
 export const SETTINGS = { id: "settings", label: "Settings", href: "/settings", icon: "settings" as IconName };

@@ -19,6 +19,12 @@ FlickDD page (once FlickDD runs with a Jellyfin or Plex backend set in its setti
 FlickSync page: copy the invitation link (masked until revealed, QR code on demand), list live rooms and close frozen
 ones, see rooms, participants, latency, traffic, sync corrections and the distribution of measured drift.
 
+Logs (sidebar): the server's latest lines, live (every 2 seconds). Filter by minimum level and by text, pause and
+resume, copy or download the lines shown, clear the view (the server keeps its lines). The server keeps only its last
+`FLICKSYNC_LOG_BUFFER` lines (2000 by default) in memory, so they are gone after a restart: use `docker compose logs`
+for anything older. Values that look like secrets (tokens, passwords, keys) show as `<redacted>`. When the server does
+not answer, the page keeps the lines it has, says so, and resumes by itself.
+
 ## Turn it on
 
 Both settings live in the repository's `.env` (see `.env.example`):

@@ -5,7 +5,7 @@ import { usePathname } from "next/navigation";
 import { useEffect, useState } from "react";
 
 import { logout } from "@/app/login/actions";
-import { HOME, MODULES, SETTINGS } from "@/lib/modules";
+import { HOME, LOGS, MODULES, SETTINGS } from "@/lib/modules";
 
 import { Icon, Logo } from "./flick/icons";
 
@@ -36,7 +36,7 @@ export function PanelSidebar() {
     });
   }
 
-  const items = [HOME, ...MODULES, SETTINGS];
+  const items = [HOME, ...MODULES, LOGS, SETTINGS];
   const active = (href: string) => (href === "/" ? pathname === "/" : pathname.startsWith(href));
 
   return (

@@ -157,3 +157,24 @@ select.setting__input option { background: var(--background); color: #fff; }
   .setting { grid-template-columns: minmax(0, 1fr); }
   .setting__control { justify-content: flex-start; }
 }
+
+/* ---------- Logs ---------- */
+.logs-toolbar { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 0.75rem 1rem; }
+.logs-toolbar .fk-field { flex: 1 1 14rem; min-width: 0; }
+.logs-toggle { display: inline-flex; align-items: center; gap: 0.5rem; font-size: 0.875rem; color: var(--muted-foreground); }
+.logs { min-height: 16rem; max-height: 70dvh; overflow: auto; border-radius: var(--radius-xl); padding: 0.75rem 1rem; background: rgb(0 0 0 / 0.3); box-shadow: inset 0 0 0 1px var(--hairline); font-family: var(--font-mono); font-size: 0.8125rem; line-height: 1.6; }
+.log { display: grid; grid-template-columns: auto 3.25rem minmax(0, 14rem) minmax(0, 1fr); gap: 0 0.75rem; }
+.log__time, .log__target { color: var(--subtle); }
+.log__target { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.log__msg { white-space: pre-wrap; overflow-wrap: anywhere; }
+.log__fields { color: var(--muted-foreground); }
+.log[data-level="warn"] .log__level { color: var(--warn); }
+.log[data-level="error"] .log__level, .log[data-level="error"] .log__msg { color: var(--error); }
+.log[data-level="debug"], .log[data-level="trace"] { color: var(--muted-foreground); }
+.log--marker { display: block; padding: 0.25rem 0; color: var(--muted-foreground); font-style: italic; }
+.logs__empty { margin: 0; color: var(--muted-foreground); font-family: var(--font-sans); }
+
+@media (max-width: 60rem) {
+  .log { grid-template-columns: auto 3.25rem minmax(0, 1fr); }
+  .log__target { display: none; }
+}
